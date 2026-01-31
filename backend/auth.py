@@ -9,7 +9,7 @@ from sqlalchemy import text
 from db import engine
 
 # Configuration
-SECRET_KEY = "ops-agent-secret-key-change-me"  # In production, use environment variable
+SECRET_KEY = "zz-agent-out-secret-key-change-me"  # In production, use environment variable
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 

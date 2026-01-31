@@ -1,6 +1,6 @@
-# Ops Agent - 飞牛 NAS (FnOS) 部署指南
+# ZZ Agent Out - 飞牛 NAS (FnOS) 部署指南
 
-本指南将帮助您在飞牛 NAS 上通过 Docker 部署 Ops Agent。
+本指南将帮助您在飞牛 NAS 上通过 Docker 部署 ZZ Agent Out。
 
 ## 准备工作
 

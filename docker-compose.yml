@@ -3,7 +3,7 @@ version: '3.8'
 services:
   frontend:
     build: ./frontend
-    container_name: ops-agent-frontend
+    container_name: zz-agent-out-frontend
     restart: always
     ports:
       - "5173:80"  # 飞牛 NAS 上可以通过 http://NAS_IP:5173 访问
@@ -12,14 +12,14 @@ services:
 
   backend:
     build: ./backend
-    container_name: ops-agent-backend
+    container_name: zz-agent-out-backend
     restart: always
     environment:
       - DB_HOST=db
       - DB_PORT=5432
-      - DB_USER=ops_agent
-      - DB_PASSWORD=OpsAgent@123
-      - DB_NAME=ops_agent
+      - DB_USER=zz_agent_out
+      - DB_PASSWORD=ZZAgentOut@123
+      - DB_NAME=zz_agent_out
       # 请在 .env 文件中设置 ZHIPUAI_API_KEY，或者直接在这里修改
       - ZHIPUAI_API_KEY=${ZHIPUAI_API_KEY}
     volumes:
@@ -30,12 +30,12 @@ services:
 
   db:
     image: pgvector/pgvector:pg16
-    container_name: ops-agent-db
+    container_name: zz-agent-out-db
     restart: always
     environment:
-      - POSTGRES_USER=ops_agent
-      - POSTGRES_PASSWORD=OpsAgent@123
-      - POSTGRES_DB=ops_agent
+      - POSTGRES_USER=zz_agent_out
+      - POSTGRES_PASSWORD=ZZAgentOut@123
+      - POSTGRES_DB=zz_agent_out
     volumes:
       - ./data/db:/var/lib/postgresql/data
     ports:
@@ -43,7 +43,7 @@ services:
 
   tunnel:
     image: cloudflare/cloudflared:latest
-    container_name: ops-agent-tunnel
+    container_name: zz-agent-out-tunnel
     restart: always
     command: tunnel run
     environment:

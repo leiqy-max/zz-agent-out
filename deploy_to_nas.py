@@ -9,7 +9,7 @@ NAS_HOST = "192.168.31.232"
 NAS_PORT = 22
 NAS_USER = "leiqy"
 NAS_PASS = "L942038441."
-REMOTE_DIR = "/vol1/1000/docker/ops-agent"
+REMOTE_DIR = "/vol1/1000/docker/zz-agent-out"
 
 def create_tarball(output_filename):
     print(f"[1/5] Creating local tarball: {output_filename}...")

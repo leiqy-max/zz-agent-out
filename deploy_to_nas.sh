@@ -5,10 +5,10 @@ NAS_USER="leiqy"
 NAS_IP="192.168.31.232"
 # 飞牛 NAS 的 Docker 目录通常在 /vol1/1000/docker/ 下，请确认此路径存在
 # 如果不存在，请修改为您 NAS 上实际的存储路径
-REMOTE_DIR="/vol1/1000/docker/ops-agent"
+REMOTE_DIR="/vol1/1000/docker/zz-agent-out"
 
 echo "=========================================="
-echo "正在部署 Ops Agent 到飞牛 NAS ($NAS_IP)..."
+echo "正在部署 ZZ Agent Out 到飞牛 NAS ($NAS_IP)..."
 echo "=========================================="
 
 # 1. 打包代码 (排除不必要的文件)

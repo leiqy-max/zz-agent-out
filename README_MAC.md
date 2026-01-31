@@ -1,4 +1,4 @@
-# Ops Agent - Mac 部署指南
+# ZZ Agent Out - Mac 部署指南
 
 本项目已适配 Docker 容器化部署，可在 Mac (M1/M2/Intel) 上一键运行。
 
@@ -9,12 +9,12 @@
     *   启动 Docker Desktop。
 
 2.  **获取代码**:
-    *   将整个 `ops-agent` 文件夹复制到您的 Mac 上。
+    *   将整个 `zz-agent-out` 文件夹复制到您的 Mac 上。
     *   **注意**: 请勿复制 `node_modules`、`venv` 或 `__pycache__` 文件夹（如果存在），这些是系统相关的，Docker 会自动重新安装。
 
 ## 2. 配置环境
 
-在项目根目录 (`ops-agent/`) 下创建一个名为 `.env` 的文件，并填入您的智谱 AI API Key：
+在项目根目录 (`zz-agent-out/`) 下创建一个名为 `.env` 的文件，并填入您的智谱 AI API Key：
 
 ```env
 # .env 文件内容
