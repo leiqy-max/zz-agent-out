@@ -643,7 +643,7 @@ class ManualQARequest(BaseModel):
 
 @app.get("/admin/unknown_questions")
 def get_unknown_questions(page: int = 1, limit: int = 20, current_user: User = Depends(get_current_active_user)):
-    if current_user.role != 'admin':
+    if current_user.role not in ['admin', 'user']:
         raise HTTPException(status_code=403, detail="Permission denied")
     
     offset = (page - 1) * limit
@@ -669,9 +669,11 @@ def get_unknown_questions(page: int = 1, limit: int = 20, current_user: User = D
 
 @app.post("/admin/learn")
 def learn_question(req: LearnRequest, current_user: User = Depends(get_current_active_user)):
-    if current_user.role != 'admin':
+    if current_user.role not in ['admin', 'user']:
         raise HTTPException(status_code=403, detail="Permission denied")
         
+    is_admin = (current_user.role == 'admin')
+    
     with engine.begin() as conn:
         # Get question text
         row = conn.execute(text("SELECT question FROM chat_logs WHERE id = :id"), {"id": req.question_id}).fetchone()
@@ -679,45 +681,52 @@ def learn_question(req: LearnRequest, current_user: User = Depends(get_current_a
             raise HTTPException(status_code=404, detail="Question log not found")
         question = row[0]
         
-        # 1. Update chat_logs status
-        conn.execute(text("UPDATE chat_logs SET status = 'learned' WHERE id = :id"), {"id": req.question_id})
-        
-        # 2. Insert into learned_qa
-        conn.execute(
-            text("INSERT INTO learned_qa (question, answer) VALUES (:q, :a)"),
-            {"q": question, "a": req.answer}
-        )
-        
-        # 3. Ingest into Vector DB
-        metadata = {
-            "source": "learned_qa",
-            "type": "learned_qa",
-            "question": question,
-            "added_by": current_user.username,
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        # Combine Q and A for better retrieval context
-        content = f"问题：{question}\n答案：{req.answer}"
-        
-        # Use load_text_content directly
-        # Note: We need to handle this inside the function or here. 
-        # load_text_content is in loader.py and uses its own engine.begin()
-        # Since we are already in a transaction here, calling another function that starts a transaction 
-        # might be fine if it uses a new connection or if we move logic.
-        # However, loader.py uses `from db import engine` which is the same engine.
-        # SQLAlchemy supports nested transactions (savepoints) if using begin_nested(), 
-        # but engine.begin() usually creates a new connection/transaction.
-        # It is safer to call it AFTER this transaction commits.
-        
-    # Call load_text_content outside the transaction block to avoid potential locking/nesting issues
-    # Although separate connections are usually fine.
-    try:
-        load_text_content(content, metadata)
-    except Exception as e:
-        print(f"Error ingesting learned QA: {e}")
-        return {"status": "partial_success", "message": "Learned but vector ingestion failed"}
+        if is_admin:
+            # 1. Update chat_logs status
+            conn.execute(text("UPDATE chat_logs SET status = 'learned' WHERE id = :id"), {"id": req.question_id})
+            
+            # 2. Insert into learned_qa
+            conn.execute(
+                text("INSERT INTO learned_qa (question, answer, status, username) VALUES (:q, :a, 'approved', :u)"),
+                {"q": question, "a": req.answer, "u": current_user.username}
+            )
+            
+            # 3. Ingest into Vector DB
+            metadata = {
+                "source": "learned_qa",
+                "type": "learned_qa",
+                "question": question,
+                "added_by": current_user.username,
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            # Combine Q and A for better retrieval context
+            content = f"问题：{question}\n答案：{req.answer}"
+            
+            # Call load_text_content inside try/except block AFTER transaction or assume safe
+            # We'll set a flag to do it outside
+            do_ingest = True
+            ingest_content = content
+            ingest_metadata = metadata
+        else:
+            # Regular user: Submit for approval
+            # 1. Update chat_logs status to remove from unknown list
+            conn.execute(text("UPDATE chat_logs SET status = 'pending_learn' WHERE id = :id"), {"id": req.question_id})
+            
+            # 2. Insert into learned_qa with pending status
+            conn.execute(
+                text("INSERT INTO learned_qa (question, answer, status, username) VALUES (:q, :a, 'pending', :u)"),
+                {"q": question, "a": req.answer, "u": current_user.username}
+            )
+            do_ingest = False
 
-    return {"status": "success", "message": "Question learned and ingested"}
+    if do_ingest:
+        try:
+            load_text_content(ingest_content, ingest_metadata)
+        except Exception as e:
+            print(f"Error ingesting learned QA: {e}")
+            return {"status": "partial_success", "message": "Learned but vector ingestion failed"}
+
+    return {"status": "success", "message": "Question learned and ingested" if is_admin else "Question submitted for approval"}
 
 @app.post("/api/polish_answer")
 def polish_answer(req: PolishRequest, current_user: User = Depends(get_current_active_user)):
