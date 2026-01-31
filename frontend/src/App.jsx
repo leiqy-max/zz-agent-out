@@ -4,10 +4,11 @@ import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Login from './Login';
+import KnowledgeDocs from './KnowledgeDocs';
 import { 
   Send, User, Bot, Image as ImageIcon, Paperclip, 
   Globe, Sparkles, X, MoreHorizontal, Code, UploadCloud, FileText,
-  Scissors, Check, RotateCcw, RefreshCw, ThumbsUp, ThumbsDown, LogOut, Shield, ShieldCheck, Download, Target, Menu
+  Scissors, Check, RotateCcw, RefreshCw, ThumbsUp, ThumbsDown, LogOut, Shield, ShieldCheck, Download, Target, Menu, Database
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -163,12 +164,14 @@ function Sidebar({ activeView, onViewChange, userRole, username, onLogout, onUpl
     // Admin only menus
     ...(userRole === 'admin' ? [
       { id: 'approval', label: '审批中心', icon: ShieldCheck },
-      { id: 'unknown', label: '未知问题', icon: Sparkles },
     ] : []),
     // Admin and Regular User menus
     ...(userRole === 'admin' || userRole === 'user' ? [
+      { id: 'unknown', label: '未知问题', icon: Sparkles },
       { id: 'training', label: '问答补全', icon: Target },
       { id: 'logs', label: '问答记录', icon: FileText },
+      { id: 'learning', label: '学习记录', icon: Database },
+      { id: 'knowledge', label: '知识文档', icon: FileText },
     ] : [])
   ];
 
@@ -200,8 +203,8 @@ function Sidebar({ activeView, onViewChange, userRole, username, onLogout, onUpl
       </div>
 
       <div className="p-4 border-t border-gray-200 space-y-4">
-        {/* Upload Button for Admin */}
-        {userRole === 'admin' && (
+        {/* Upload Button for Admin and User */}
+        {(userRole === 'admin' || userRole === 'user') && (
           <button
              onClick={onUpload}
              className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm font-medium"
@@ -237,6 +240,7 @@ function TrainingMode() {
   const [answer, setAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [polishing, setPolishing] = useState(false);
+  const [prePolishAnswer, setPrePolishAnswer] = useState("");
 
   const handleSubmit = async () => {
     if (!question.trim() || !answer.trim()) {
@@ -249,6 +253,7 @@ function TrainingMode() {
       alert(res.data.message || "操作成功！");
       setQuestion("");
       setAnswer("");
+      setPrePolishAnswer("");
     } catch (e) {
       alert("操作失败: " + (e.response?.data?.detail || e.message));
     } finally {
@@ -261,9 +266,10 @@ function TrainingMode() {
       alert("请先填写问题和草稿答案，AI才能帮您润色");
       return;
     }
+    setPrePolishAnswer(answer); // Save current answer before polishing
     setPolishing(true);
     try {
-      const res = await axios.post('/api/polish_answer', { 
+      const res = await axios.post('/admin/polish_answer', { 
         question, 
         draft_answer: answer 
       });
@@ -274,6 +280,17 @@ function TrainingMode() {
       alert("润色失败: " + (e.response?.data?.detail || e.message));
     } finally {
       setPolishing(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    // Ctrl+Z to undo polish
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      if (prePolishAnswer) {
+        e.preventDefault();
+        setAnswer(prePolishAnswer);
+        setPrePolishAnswer(""); // Clear after undo
+      }
     }
   };
 
@@ -313,18 +330,24 @@ function TrainingMode() {
               <label className="block text-sm font-medium text-gray-700">
                 标准答案 (Answer)
               </label>
-              <button
-                onClick={handlePolish}
-                disabled={polishing || !question.trim() || !answer.trim()}
-                className="flex items-center text-xs text-purple-600 hover:text-purple-700 bg-purple-50 hover:bg-purple-100 px-3 py-1 rounded-full transition-colors disabled:opacity-50"
-              >
-                <Sparkles size={14} className={cn("mr-1", polishing ? "animate-spin" : "")} />
-                {polishing ? "AI 正在润色..." : "AI 润色优化"}
-              </button>
+              <div className="flex items-center space-x-2">
+                {prePolishAnswer && (
+                    <span className="text-xs text-gray-400 mr-2">按 Ctrl+Z 撤销润色</span>
+                )}
+                <button
+                    onClick={handlePolish}
+                    disabled={polishing || !question.trim() || !answer.trim()}
+                    className="flex items-center text-xs text-purple-600 hover:text-purple-700 bg-purple-50 hover:bg-purple-100 px-3 py-1 rounded-full transition-colors disabled:opacity-50"
+                >
+                    <Sparkles size={14} className={cn("mr-1", polishing ? "animate-spin" : "")} />
+                    {polishing ? "AI 正在润色..." : "AI 润色优化"}
+                </button>
+              </div>
             </div>
             <textarea
               value={answer}
               onChange={(e) => setAnswer(e.target.value)}
+              onKeyDown={handleKeyDown}
               rows={6}
               className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none"
               placeholder="输入标准的回答内容..."
@@ -616,6 +639,113 @@ function AdminView() {
     );
 }
 
+// 学习记录视图
+function LearningRecordsView() {
+    const [records, setRecords] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [page, setPage] = useState(1);
+    const [total, setTotal] = useState(0);
+    const limit = 10;
+
+    useEffect(() => {
+        fetchRecords();
+    }, [page]);
+
+    const fetchRecords = async () => {
+        setLoading(true);
+        try {
+            const res = await axios.get(`/admin/learning_records?page=${page}&limit=${limit}`);
+            setRecords(res.data.records || []);
+            setTotal(res.data.total || 0);
+        } catch (e) {
+            console.error(e);
+            setRecords([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="h-full flex flex-col bg-gray-50 p-6 overflow-hidden">
+            <h2 className="text-xl font-bold mb-4 text-green-700 flex items-center">
+                <Database size={24} className="mr-2" />
+                学习记录
+            </h2>
+
+            <div className="flex-1 overflow-auto bg-white rounded-lg shadow">
+                <table className="w-full text-left border-collapse">
+                    <thead>
+                        <tr className="bg-gray-100 border-b border-gray-200">
+                            <th className="p-3 font-medium text-gray-600 w-24">ID</th>
+                            <th className="p-3 font-medium text-gray-600 w-1/4">问题</th>
+                            <th className="p-3 font-medium text-gray-600">答案</th>
+                            <th className="p-3 font-medium text-gray-600 w-32">贡献者</th>
+                            <th className="p-3 font-medium text-gray-600 w-24">状态</th>
+                            <th className="p-3 font-medium text-gray-600 w-40">时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {records.length === 0 ? (
+                            <tr>
+                                <td colSpan="6" className="p-8 text-center text-gray-500">
+                                    暂无学习记录
+                                </td>
+                            </tr>
+                        ) : (
+                            records.map(record => (
+                                <tr key={record.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                                    <td className="p-3 text-gray-500 text-sm">#{record.id}</td>
+                                    <td className="p-3 font-medium text-gray-800">{record.question}</td>
+                                    <td className="p-3 text-gray-600 text-sm line-clamp-2 max-w-md" title={record.answer}>
+                                        {record.answer.length > 100 ? record.answer.substring(0, 100) + '...' : record.answer}
+                                    </td>
+                                    <td className="p-3">
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                            <User size={10} className="mr-1" />
+                                            {record.username || '未知'}
+                                        </span>
+                                    </td>
+                                    <td className="p-3">
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                                            record.status === 'approved' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                                        }`}>
+                                            {record.status === 'approved' ? '已生效' : '待审核'}
+                                        </span>
+                                    </td>
+                                    <td className="p-3 text-gray-500 text-sm">{record.created_at}</td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* Pagination */}
+            {total > limit && (
+                <div className="flex justify-center mt-4 space-x-2">
+                    <button 
+                        disabled={page === 1}
+                        onClick={() => setPage(p => p - 1)}
+                        className="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50"
+                    >
+                        上一页
+                    </button>
+                    <span className="px-3 py-1 text-gray-600">
+                        第 {page} 页 / 共 {Math.ceil(total / limit)} 页
+                    </span>
+                    <button 
+                        disabled={page * limit >= total}
+                        onClick={() => setPage(p => p + 1)}
+                        className="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50"
+                    >
+                        下一页
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
 // 获取当前时间
 const getCurrentTime = () => {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -789,7 +919,7 @@ function UserLogsView() {
 }
 
 // 未知问题学习视图
-function UnknownQuestionsView() {
+function UnknownQuestionsView({ userRole }) {
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
@@ -800,6 +930,8 @@ function UnknownQuestionsView() {
     const [editingId, setEditingId] = useState(null);
     const [learnAnswer, setLearnAnswer] = useState("");
     const [submitting, setSubmitting] = useState(false);
+    const [polishing, setPolishing] = useState(false);
+    const [prePolishAnswer, setPrePolishAnswer] = useState("");
 
     useEffect(() => {
         fetchLogs();
@@ -853,6 +985,39 @@ function UnknownQuestionsView() {
         }
     };
 
+    const handlePolish = async (question) => {
+        if (!learnAnswer.trim()) {
+          alert("请先填写草稿答案，AI才能帮您润色");
+          return;
+        }
+        setPrePolishAnswer(learnAnswer); // Save current answer before polishing
+        setPolishing(true);
+        try {
+          const res = await axios.post('/admin/polish_answer', { 
+            question, 
+            draft_answer: learnAnswer 
+          });
+          if (res.data.status === 'success') {
+            setLearnAnswer(res.data.polished_answer);
+          }
+        } catch (e) {
+          alert("润色失败: " + (e.response?.data?.detail || e.message));
+        } finally {
+          setPolishing(false);
+        }
+    };
+
+    const handleKeyDown = (e) => {
+        // Ctrl+Z to undo polish
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            if (prePolishAnswer) {
+                e.preventDefault();
+                setLearnAnswer(prePolishAnswer);
+                setPrePolishAnswer(""); // Clear after undo
+            }
+        }
+    };
+
     return (
         <div className="h-full flex flex-col bg-gray-50 p-6 overflow-hidden">
              <div className="max-w-6xl mx-auto w-full h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -891,12 +1056,28 @@ function UnknownQuestionsView() {
                                     {/* Edit Area */}
                                     {editingId === log.id ? (
                                         <div className="mt-3 bg-purple-50 p-3 rounded border border-purple-100 animate-in fade-in slide-in-from-top-2">
-                                            <label className="block text-purple-800 font-medium mb-1">请输入标准答案：</label>
+                                            <div className="flex justify-between items-center mb-1">
+                                                <div className="flex items-center">
+                                                    <label className="block text-purple-800 font-medium mr-2">请输入标准答案：</label>
+                                                    {prePolishAnswer && (
+                                                        <span className="text-xs text-gray-400">按 Ctrl+Z 撤销润色</span>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    onClick={() => handlePolish(log.question)}
+                                                    disabled={polishing || !learnAnswer.trim()}
+                                                    className="flex items-center text-xs text-purple-600 hover:text-purple-700 bg-white border border-purple-200 hover:border-purple-300 px-3 py-1 rounded-full transition-colors disabled:opacity-50"
+                                                >
+                                                    <Sparkles size={14} className={cn("mr-1", polishing ? "animate-spin" : "")} />
+                                                    {polishing ? "AI 正在润色..." : "AI 润色优化"}
+                                                </button>
+                                            </div>
                                             <textarea 
                                                 className="w-full p-2 border border-purple-200 rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none min-h-[100px]"
                                                 placeholder="在此输入答案，提交后系统将自动学习..."
                                                 value={learnAnswer}
                                                 onChange={e => setLearnAnswer(e.target.value)}
+                                                onKeyDown={handleKeyDown}
                                             />
                                             <div className="flex justify-end space-x-2 mt-2">
                                                 <button 
@@ -915,7 +1096,16 @@ function UnknownQuestionsView() {
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="flex justify-end mt-2">
+                                        <div className="flex justify-end mt-2 space-x-2">
+                                            {userRole === 'admin' && (
+                                                <button 
+                                                    onClick={() => handleDiscard(log.id)}
+                                                    className="flex items-center px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-md text-sm font-medium transition-colors"
+                                                >
+                                                    <X size={14} className="mr-1.5" />
+                                                    丢弃
+                                                </button>
+                                            )}
                                             <button 
                                                 onClick={() => handleLearn(log)}
                                                 className="flex items-center px-3 py-1.5 bg-purple-100 text-purple-700 hover:bg-purple-200 rounded-md text-sm font-medium transition-colors"
@@ -1468,15 +1658,8 @@ function ChatInterface({ auth, onLogout, isUserMode }) {
                   </span>
                )}
 
-               {/* 上传按钮 - 对所有用户显示，但在内部限制权限 */}
-               <button 
-                 onClick={() => setShowUploadModal(true)}
-                 className="flex items-center space-x-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors text-sm font-medium"
-               >
-                 <UploadCloud size={16} />
-                 <span className="hidden md:inline">上传知识库</span>
-               </button>
-               <div className="h-4 w-px bg-gray-200 mx-1 md:mx-2"></div>
+               {/* 上传按钮已移除，保留左侧菜单的上传入口 */}
+
                <div className="flex items-center space-x-2">
                    <span className="text-xs text-gray-500 hidden md:inline">{auth.username}</span>
                    <button onClick={onLogout} className="text-gray-500 hover:text-red-600 transition-colors flex items-center space-x-1 p-1" title="退出登录">
@@ -1782,9 +1965,7 @@ function ChatInterface({ auth, onLogout, isUserMode }) {
                 {/* 管理员界面没有顶部导航，必须保留底部按钮 */}
                 {/* 普通用户界面已有顶部上传按钮，底部可隐藏以保持原样，或者保留方便操作 */}
                 {/* 用户反馈说上面的没了，说明他们习惯用上面的。为了还原，我们把下面的对普通用户隐藏 */}
-                {auth?.role !== 'guest' && !isUserMode && (
-                   <ToolButton icon={UploadCloud} label="上传知识库" onClick={() => setShowUploadModal(true)} />
-                )}
+                {/* 用户要求移除提问窗口下方的上传知识库按钮，只保留左侧菜单下方的 */}
               </div>
               
               <button
@@ -1891,16 +2072,6 @@ function App() {
       );
   }
 
-  if (auth.role !== 'admin') {
-      return (
-        <div className="flex flex-col h-screen bg-white overflow-hidden">
-             <div className="flex-1 flex flex-col h-full w-full relative">
-                 <ChatInterface auth={auth} onLogout={handleLogout} isUserMode={true} />
-             </div>
-        </div>
-      );
-  }
-
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
       {/* Mobile Overlay */}
@@ -1953,7 +2124,9 @@ function App() {
             {activeView === 'training' && <TrainingMode />}
             {activeView === 'approval' && <AdminView />}
             {activeView === 'logs' && <UserLogsView />}
-            {activeView === 'unknown' && <UnknownQuestionsView />}
+            {activeView === 'unknown' && <UnknownQuestionsView userRole={auth.role} />}
+            {activeView === 'learning' && <LearningRecordsView />}
+            {activeView === 'knowledge' && <KnowledgeDocs auth={auth} />}
          </div>
       </div>
 

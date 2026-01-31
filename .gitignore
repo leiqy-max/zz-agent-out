@@ -39,3 +39,10 @@ tools/cloudflared
 *.tar
 *.tar.gz
 *.zip
+
+# Build artifacts
+ops-agent-linux-x64/
+build_env/
+test_run/
+*.spec
+config.yaml.bak

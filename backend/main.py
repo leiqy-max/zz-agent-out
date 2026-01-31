@@ -1,3 +1,46 @@
+import os
+import sys
+import yaml
+
+# Support for Intranet Binary: Load config.yaml if exists
+if os.path.exists("config.yaml"):
+    try:
+        with open("config.yaml", "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+            if config:
+                # Parse Database Config
+                if "database" in config:
+                    db = config["database"]
+                    if "host" in db: os.environ["DB_HOST"] = str(db["host"])
+                    if "port" in db: os.environ["DB_PORT"] = str(db["port"])
+                    if "user" in db: os.environ["DB_USER"] = str(db["user"])
+                    if "password" in db: os.environ["DB_PASSWORD"] = str(db["password"])
+                    if "dbname" in db: os.environ["DB_NAME"] = str(db["dbname"])
+
+                # Parse LLM Config
+                if "llm" in config:
+                    llm = config["llm"]
+                    if "provider" in llm: os.environ["LLM_PROVIDER"] = str(llm["provider"])
+                    if "api_key" in llm: os.environ["LLM_API_KEY"] = str(llm["api_key"])
+                    if "chat_base_url" in llm: os.environ["LLM_BASE_URL"] = str(llm["chat_base_url"]).strip().strip('`').strip()
+                    if "model" in llm: os.environ["LLM_MODEL"] = str(llm["model"])
+                    if "embedding_base_url" in llm: os.environ["EMBEDDING_BASE_URL"] = str(llm["embedding_base_url"]).strip().strip('`').strip()
+                    if "embedding_model" in llm: os.environ["EMBEDDING_MODEL"] = str(llm["embedding_model"])
+
+                # Parse Server Config
+                if "server" in config:
+                    srv = config["server"]
+                    if "host" in srv: os.environ["HOST"] = str(srv["host"])
+                    if "port" in srv: os.environ["PORT"] = str(srv["port"])
+
+                # Parse flat keys (legacy support)
+                for key, value in config.items():
+                    if isinstance(value, (str, int, float, bool)):
+                         os.environ[str(key)] = str(value)
+                print("Loaded configuration from config.yaml")
+    except Exception as e:
+        print(f"Error loading config.yaml: {e}")
+
 from fastapi import FastAPI, Request, UploadFile, File, Depends, HTTPException, status, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
@@ -8,10 +51,12 @@ from pydantic import BaseModel
 import uuid
 import os
 import shutil
+import jinja2 # Force import for PyInstaller
+import markupsafe # Force import for PyInstaller
 from collections import Counter, deque
 from llm.factory import get_llm_client
 from rag.qa import answer_question
-from rag.loader import load_document, load_text_content
+from rag.loader import load_document, load_text_content, delete_document_by_source
 from db import engine
 from sqlalchemy import text
 from typing import List
@@ -28,42 +73,13 @@ from auth import (
     get_current_active_user, get_password_hash, ACCESS_TOKEN_EXPIRE_MINUTES
 )
 
-# 初始化 FastAPI
-app = FastAPI()
-
-# Mount user images directory
-if not os.path.exists("user_images"):
-    os.makedirs("user_images")
-app.mount("/user_images", StaticFiles(directory="user_images"), name="user_images")
-
-
-# CAPTCHA Store (In-memory for simplicity)
-CAPTCHA_STORE = {}
-
-# Local file persistence for questions
-QUESTION_HISTORY_FILE = "question_history.json"
-
-def load_question_history():
-    if os.path.exists(QUESTION_HISTORY_FILE):
-        try:
-            with open(QUESTION_HISTORY_FILE, "r", encoding="utf-8") as f:
-                return deque(json.load(f), maxlen=500)
-        except Exception as e:
-            print(f"Error loading question history: {e}")
-    return deque(maxlen=500)
-
-def save_question_history(buffer):
-    try:
-        with open(QUESTION_HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(list(buffer), f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Error saving question history: {e}")
-
-question_buffer = load_question_history()
 
 # 数据库初始化 (适配 Docker/Mac 首次运行)
-@app.on_event("startup")
-async def startup_event():
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
     try:
         with engine.connect() as conn:
             # 启用 pgvector 扩展
@@ -141,6 +157,12 @@ async def startup_event():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """))
+            # Add new columns for Knowledge Docs feature
+            try:
+                conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS download_count INTEGER DEFAULT 0"))
+                conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN IF NOT EXISTS file_size INTEGER DEFAULT 0"))
+            except Exception as e:
+                print(f"Migration note (uploaded_files): {e}")
             conn.commit()
             
             # Seed Default Users
@@ -162,6 +184,41 @@ async def startup_event():
         print("✅ Database initialized successfully")
     except Exception as e:
         print(f"⚠️ Database initialization failed: {e}")
+    
+    yield
+    # Shutdown logic (if any)
+
+# 初始化 FastAPI
+app = FastAPI(lifespan=lifespan)
+
+# Mount user images directory
+if not os.path.exists("user_images"):
+    os.makedirs("user_images")
+app.mount("/user_images", StaticFiles(directory="user_images"), name="user_images")
+
+# CAPTCHA Store (In-memory for simplicity)
+CAPTCHA_STORE = {}
+
+# Local file persistence for questions
+QUESTION_HISTORY_FILE = "question_history.json"
+
+def load_question_history():
+    if os.path.exists(QUESTION_HISTORY_FILE):
+        try:
+            with open(QUESTION_HISTORY_FILE, "r", encoding="utf-8") as f:
+                return deque(json.load(f), maxlen=500)
+        except Exception as e:
+            print(f"Error loading question history: {e}")
+    return deque(maxlen=500)
+
+def save_question_history(buffer):
+    try:
+        with open(QUESTION_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(buffer), f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Error saving question history: {e}")
+
+question_buffer = load_question_history()
 
 # 允许跨域请求
 app.add_middleware(
@@ -174,6 +231,27 @@ app.add_middleware(
 
 # 使用 Jinja2 模板
 templates = Jinja2Templates(directory="templates")
+
+# Frontend Static Files Logic
+# If frozen (PyInstaller), sys._MEIPASS/static
+# If dev/local, check backend/static or frontend/dist (fallback)
+
+if getattr(sys, 'frozen', False):
+    # PyInstaller bundled mode
+    BASE_DIR = sys._MEIPASS
+    STATIC_DIR = os.path.join(BASE_DIR, "static")
+else:
+    # Development mode
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    STATIC_DIR = os.path.join(BASE_DIR, "static")
+    
+    # Fallback for dev if static doesn't exist but dist_frontend does (legacy/dev support)
+    if not os.path.exists(STATIC_DIR) and os.path.exists("dist_frontend"):
+        STATIC_DIR = "dist_frontend"
+
+if os.path.exists(STATIC_DIR):
+    # Mount assets (CSS, JS, Images from Vite build)
+    app.mount("/assets", StaticFiles(directory=f"{STATIC_DIR}/assets"), name="assets")
 
 # 创建一个 Pydantic 模型来接收请求的 body
 class QuestionRequest(BaseModel):
@@ -191,6 +269,8 @@ class FeedbackRequest(BaseModel):
 # 显示前端页面
 @app.get("/", response_class=HTMLResponse)
 async def get_index(request: Request):
+    if os.path.exists(STATIC_DIR):
+        return FileResponse(f"{STATIC_DIR}/index.html")
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/captcha")
@@ -338,8 +418,8 @@ def upload_document(
             # Record in uploaded_files table
             with engine.begin() as conn:
                 conn.execute(
-                    text("INSERT INTO uploaded_files (filename, file_path, uploader, status) VALUES (:f, :p, :u, :s)"),
-                    {"f": file.filename, "p": file_path, "u": current_user.username, "s": status_code}
+                    text("INSERT INTO uploaded_files (filename, file_path, uploader, status, file_size) VALUES (:f, :p, :u, :s, :sz)"),
+                    {"f": file.filename, "p": file_path, "u": current_user.username, "s": status_code, "sz": size}
                 )
 
             if is_admin:
@@ -570,9 +650,10 @@ def reprocess_docs(force: bool = False):
              with engine.begin() as conn:
                  res = conn.execute(text("SELECT id FROM uploaded_files WHERE file_path = :p"), {"p": file_path}).fetchone()
                  if not res:
+                     file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
                      conn.execute(
-                        text("INSERT INTO uploaded_files (filename, file_path, uploader, status) VALUES (:f, :p, :u, :s)"),
-                        {"f": filename, "p": file_path, "u": "system_scan", "s": "approved"}
+                        text("INSERT INTO uploaded_files (filename, file_path, uploader, status, file_size) VALUES (:f, :p, :u, :s, :sz)"),
+                        {"f": filename, "p": file_path, "u": "system_scan", "s": "approved", "sz": file_size}
                     )
         except Exception as e:
              errors.append(f"{os.path.basename(file_path)}: {str(e)}")
@@ -728,18 +809,25 @@ def learn_question(req: LearnRequest, current_user: User = Depends(get_current_a
 
     return {"status": "success", "message": "Question learned and ingested" if is_admin else "Question submitted for approval"}
 
-@app.post("/api/polish_answer")
+@app.post("/admin/polish_answer")
 def polish_answer(req: PolishRequest, current_user: User = Depends(get_current_active_user)):
     try:
         llm = get_llm_client()
         prompt = f"""
-你是一个专业的运维助手。请优化以下问答对中的答案，使其更加专业、准确、条理清晰。
+你是一个专业的运维助手。请对以下问答对中的答案进行**轻微润色**。
+要求：
+1. 保持原意，不要过度发散或添加无关信息。
+2. 专业术语准确，语言言简意赅。
+3. 仅在必要时进行语法或逻辑修正。
+
 问题：{req.question}
 草稿答案：{req.draft_answer}
 
 请直接输出优化后的答案内容，不要包含任何解释或开场白。
 """
-        polished_answer = llm.generate(prompt)
+        # llm.chat expects a list of messages
+        messages = [{"role": "user", "content": prompt}]
+        polished_answer = llm.chat(messages)
         return {"status": "success", "polished_answer": polished_answer.strip()}
     except Exception as e:
         print(f"Error polishing answer: {e}")
@@ -760,31 +848,60 @@ def add_qa(req: ManualQARequest, current_user: User = Depends(get_current_active
     status = 'approved' if current_user.role == 'admin' else 'pending'
 
     with engine.begin() as conn:
-        # 1. Insert into learned_qa
         conn.execute(
             text("INSERT INTO learned_qa (question, answer, status, username) VALUES (:q, :a, :s, :u)"),
             {"q": question, "a": answer, "s": status, "u": current_user.username}
         )
         
-    # 2. Ingest into Vector DB (Only if approved)
-    if status == 'approved':
-        metadata = {
-            "source": "manual_training",
-            "type": "learned_qa",
-            "question": question,
-            "added_by": current_user.username,
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        content = f"问题：{question}\n答案：{answer}"
+        # Only ingest if approved immediately (Admin)
+        if status == 'approved':
+             # Ingest logic similar to learn
+             content = f"问题：{question}\n答案：{answer}"
+             metadata = {
+                "source": "manual_qa",
+                "type": "manual_qa",
+                "question": question,
+                "added_by": current_user.username,
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+             }
+             try:
+                 load_text_content(content, metadata)
+             except Exception as e:
+                 print(f"Error ingesting manual QA: {e}")
+
+    return {"status": "success", "message": "Q&A added" if status == 'approved' else "Q&A submitted for approval"}
+
+@app.get("/admin/learning_records")
+def get_learning_records(page: int = 1, limit: int = 10, current_user: User = Depends(get_current_active_user)):
+    # Both admin and user can view learning records
+    offset = (page - 1) * limit
+    
+    with engine.connect() as conn:
+        # Get total count
+        total = conn.execute(text("SELECT COUNT(*) FROM learned_qa")).scalar()
         
-        try:
-            load_text_content(content, metadata)
-        except Exception as e:
-            print(f"Error ingesting manual QA: {e}")
-            return {"status": "partial_success", "message": "Saved but vector ingestion failed"}
-        return {"status": "success", "message": "Question added to knowledge base"}
-    else:
-        return {"status": "success", "message": "Question submitted for approval"}
+        # Get records
+        query = text("""
+            SELECT id, question, answer, status, username, created_at 
+            FROM learned_qa 
+            ORDER BY id DESC 
+            LIMIT :limit OFFSET :offset
+        """)
+        
+        rows = conn.execute(query, {"limit": limit, "offset": offset}).fetchall()
+        
+        records = []
+        for row in rows:
+            records.append({
+                "id": row[0],
+                "question": row[1],
+                "answer": row[2],
+                "status": row[3],
+                "username": row[4],
+                "created_at": row[5].strftime("%Y-%m-%d %H:%M:%S") if row[5] else ""
+            })
+            
+        return {"records": records, "total": total}
 
 @app.get("/admin/pending_qa")
 def get_pending_qa(page: int = 1, limit: int = 20, current_user: User = Depends(get_current_active_user)):
@@ -860,7 +977,7 @@ def reject_qa(qa_id: int, current_user: User = Depends(get_current_active_user))
 
 @app.post("/admin/discard_unknown/{id}")
 def discard_unknown_question(id: int, current_user: User = Depends(get_current_active_user)):
-    if current_user.role != 'admin':
+    if current_user.role not in ['admin', 'user']:
         raise HTTPException(status_code=403, detail="Permission denied")
         
     with engine.begin() as conn:
@@ -1017,3 +1134,154 @@ def debug_db_status():
             return info
     except Exception as e:
         return {"error": str(e)}
+
+# Knowledge Documents APIs
+
+@app.get("/documents/search")
+def search_documents(
+    q: str = "", 
+    page: int = 1, 
+    limit: int = 20, 
+    current_user: User = Depends(get_current_active_user)
+):
+    # Allow all users to search approved documents
+    offset = (page - 1) * limit
+    
+    with engine.connect() as conn:
+        # Build query
+        base_query = "SELECT id, filename, uploader, created_at, file_size, download_count FROM uploaded_files WHERE status = 'approved'"
+        params = {"limit": limit, "offset": offset}
+        
+        if q:
+            base_query += " AND filename ILIKE :q"
+            params["q"] = f"%{q}%"
+            
+        # Count total
+        count_query = f"SELECT COUNT(*) FROM ({base_query}) as sub"
+        total = conn.execute(text(count_query), params).scalar()
+        
+        # Get data
+        data_query = base_query + " ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
+        result = conn.execute(text(data_query), params).fetchall()
+        
+        docs = []
+        for row in result:
+            docs.append({
+                "id": row[0],
+                "filename": row[1],
+                "uploader": row[2],
+                "created_at": str(row[3]),
+                "file_size": row[4] if row[4] is not None else 0,
+                "download_count": row[5] if row[5] is not None else 0
+            })
+            
+    return {"total": total, "docs": docs, "page": page, "limit": limit}
+
+@app.get("/documents/hot")
+def get_hot_documents(limit: int = 10, current_user: User = Depends(get_current_active_user)):
+    with engine.connect() as conn:
+        result = conn.execute(
+            text("SELECT id, filename, download_count FROM uploaded_files WHERE status = 'approved' ORDER BY download_count DESC LIMIT :limit"),
+            {"limit": limit}
+        ).fetchall()
+        
+        docs = []
+        for row in result:
+            docs.append({
+                "id": row[0],
+                "filename": row[1],
+                "download_count": row[2] if row[2] is not None else 0
+            })
+            
+    return {"docs": docs}
+
+@app.get("/documents/{doc_id}")
+def download_knowledge_doc(doc_id: int, preview: bool = False, current_user: User = Depends(get_current_active_user)):
+    with engine.begin() as conn: # Use begin for update transaction
+        row = conn.execute(
+            text("SELECT filename, file_path FROM uploaded_files WHERE id = :id AND status = 'approved'"), 
+            {"id": doc_id}
+        ).fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found or not approved")
+        
+        filename, file_path = row
+        
+        if not os.path.exists(file_path):
+             raise HTTPException(status_code=404, detail="File not found on disk")
+        
+        # Increment download count
+        conn.execute(text("UPDATE uploaded_files SET download_count = COALESCE(download_count, 0) + 1 WHERE id = :id"), {"id": doc_id})
+        
+        disposition = "inline" if preview else "attachment"
+        
+        # Determine media type for preview if possible, else generic
+        media_type = 'application/octet-stream'
+        if preview:
+             ext = os.path.splitext(filename)[1].lower()
+             if ext == '.pdf': media_type = 'application/pdf'
+             elif ext in ['.jpg', '.jpeg']: media_type = 'image/jpeg'
+             elif ext == '.png': media_type = 'image/png'
+             elif ext == '.txt': media_type = 'text/plain'
+        
+        return FileResponse(
+            path=file_path, 
+            filename=filename, 
+            media_type=media_type,
+            content_disposition_type=disposition
+        )
+
+@app.delete("/documents/{doc_id}")
+def delete_document(doc_id: int, current_user: User = Depends(get_current_active_user)):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can delete documents")
+        
+    # Get file info and delete from DB in a transaction
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT filename, file_path FROM uploaded_files WHERE id = :id"), 
+            {"id": doc_id}
+        ).fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+            
+        filename, file_path = row
+        
+        # 1. Delete from uploaded_files
+        conn.execute(text("DELETE FROM uploaded_files WHERE id = :id"), {"id": doc_id})
+        
+    # 2. Delete from Vector DB (documents table) using helper
+    # This ensures consistency using the 'source' (file_path) metadata
+    delete_document_by_source(file_path)
+        
+    # 3. Delete physical file
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            print(f"Error deleting file {file_path}: {e}")
+            # Continue even if file delete fails
+            
+    return {"status": "success", "message": f"Document '{filename}' deleted from database and knowledge base."}
+
+# SPA Catch-all route (Must be last)
+@app.get("/{full_path:path}")
+async def catch_all(full_path: str):
+    DIST_DIR = "dist_frontend"
+    if os.path.exists(DIST_DIR):
+        # Return index.html for any unknown path (SPA routing)
+        # Verify it's not a static file request that missed the mount
+        if "." not in full_path.split("/")[-1]: 
+            return FileResponse(f"{DIST_DIR}/index.html")
+    
+    # Fallback to 404
+    raise HTTPException(status_code=404, detail="Not Found")
+
+if __name__ == "__main__":
+    import uvicorn
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    print(f"Starting server on {host}:{port}")
+    uvicorn.run(app, host=host, port=port)
