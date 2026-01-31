@@ -9,6 +9,7 @@ import uuid
 import os
 import shutil
 from collections import Counter, deque
+from llm.factory import get_llm_client
 from rag.qa import answer_question
 from rag.loader import load_document, load_text_content
 from db import engine
@@ -104,6 +105,11 @@ async def startup_event():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """))
+            try:
+                conn.execute(text("ALTER TABLE learned_qa ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'approved'"))
+                conn.execute(text("ALTER TABLE learned_qa ADD COLUMN IF NOT EXISTS username VARCHAR(50)"))
+            except Exception as e:
+                print(f"Migration note (learned_qa): {e}")
             
             # 创建 question_history 表 (保留旧表定义以免报错，后续可迁移)
             conn.execute(text("""
@@ -173,6 +179,10 @@ templates = Jinja2Templates(directory="templates")
 class QuestionRequest(BaseModel):
     question: str
     image: str | None = None
+
+class PolishRequest(BaseModel):
+    question: str
+    draft_answer: str
 
 class FeedbackRequest(BaseModel):
     question_id: int
@@ -454,7 +464,8 @@ def reject_doc(doc_id: int, current_user: User = Depends(get_current_active_user
 
 @app.get("/admin/chat_logs")
 def get_admin_chat_logs(page: int = 1, limit: int = 20, current_user: User = Depends(get_current_active_user)):
-    if current_user.role != 'admin':
+    # Allow admin and regular users to view chat logs
+    if current_user.role not in ['admin', 'user']:
         raise HTTPException(status_code=403, detail="Permission denied")
     
     offset = (page - 1) * limit
@@ -708,10 +719,28 @@ def learn_question(req: LearnRequest, current_user: User = Depends(get_current_a
 
     return {"status": "success", "message": "Question learned and ingested"}
 
+@app.post("/api/polish_answer")
+def polish_answer(req: PolishRequest, current_user: User = Depends(get_current_active_user)):
+    try:
+        llm = get_llm_client()
+        prompt = f"""
+你是一个专业的运维助手。请优化以下问答对中的答案，使其更加专业、准确、条理清晰。
+问题：{req.question}
+草稿答案：{req.draft_answer}
+
+请直接输出优化后的答案内容，不要包含任何解释或开场白。
+"""
+        polished_answer = llm.generate(prompt)
+        return {"status": "success", "polished_answer": polished_answer.strip()}
+    except Exception as e:
+        print(f"Error polishing answer: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/admin/add_qa")
 def add_qa(req: ManualQARequest, current_user: User = Depends(get_current_active_user)):
-    if current_user.role != 'admin':
-        raise HTTPException(status_code=403, detail="Permission denied")
+    # Regular users can now submit, but with pending status
+    # if current_user.role != 'admin':
+    #     raise HTTPException(status_code=403, detail="Permission denied")
         
     question = req.question.strip()
     answer = req.answer.strip()
@@ -719,14 +748,17 @@ def add_qa(req: ManualQARequest, current_user: User = Depends(get_current_active
     if not question or not answer:
         raise HTTPException(status_code=400, detail="Question and Answer cannot be empty")
 
+    status = 'approved' if current_user.role == 'admin' else 'pending'
+
     with engine.begin() as conn:
         # 1. Insert into learned_qa
         conn.execute(
-            text("INSERT INTO learned_qa (question, answer) VALUES (:q, :a)"),
-            {"q": question, "a": answer}
+            text("INSERT INTO learned_qa (question, answer, status, username) VALUES (:q, :a, :s, :u)"),
+            {"q": question, "a": answer, "s": status, "u": current_user.username}
         )
         
-        # 2. Ingest into Vector DB
+    # 2. Ingest into Vector DB (Only if approved)
+    if status == 'approved':
         metadata = {
             "source": "manual_training",
             "type": "learned_qa",
@@ -736,13 +768,98 @@ def add_qa(req: ManualQARequest, current_user: User = Depends(get_current_active
         }
         content = f"问题：{question}\n答案：{answer}"
         
+        try:
+            load_text_content(content, metadata)
+        except Exception as e:
+            print(f"Error ingesting manual QA: {e}")
+            return {"status": "partial_success", "message": "Saved but vector ingestion failed"}
+        return {"status": "success", "message": "Question added to knowledge base"}
+    else:
+        return {"status": "success", "message": "Question submitted for approval"}
+
+@app.get("/admin/pending_qa")
+def get_pending_qa(page: int = 1, limit: int = 20, current_user: User = Depends(get_current_active_user)):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Permission denied")
+    
+    offset = (page - 1) * limit
+    with engine.connect() as conn:
+        total = conn.execute(text("SELECT COUNT(*) FROM learned_qa WHERE status = 'pending'")).scalar()
+        
+        result = conn.execute(
+            text("SELECT id, question, answer, username, created_at FROM learned_qa WHERE status = 'pending' ORDER BY created_at DESC LIMIT :limit OFFSET :offset"),
+            {"limit": limit, "offset": offset}
+        ).fetchall()
+        
+        items = []
+        for row in result:
+            items.append({
+                "id": row[0],
+                "question": row[1],
+                "answer": row[2],
+                "username": row[3],
+                "created_at": str(row[4])
+            })
+            
+    return {"total": total, "items": items, "page": page, "limit": limit}
+
+@app.post("/admin/approve_qa/{qa_id}")
+def approve_qa(qa_id: int, current_user: User = Depends(get_current_active_user)):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    with engine.begin() as conn:
+        row = conn.execute(text("SELECT question, answer, username FROM learned_qa WHERE id = :id"), {"id": qa_id}).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="QA not found")
+            
+        question, answer, username = row
+        
+        # Update status
+        conn.execute(text("UPDATE learned_qa SET status = 'approved' WHERE id = :id"), {"id": qa_id})
+        
+        # Ingest
+        metadata = {
+            "source": "learned_qa",
+            "type": "learned_qa",
+            "question": question,
+            "added_by": username or current_user.username,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        content = f"问题：{question}\n答案：{answer}"
+        
     try:
         load_text_content(content, metadata)
     except Exception as e:
-        print(f"Error ingesting manual QA: {e}")
-        return {"status": "partial_success", "message": "Saved but vector ingestion failed"}
+        print(f"Error ingesting approved QA: {e}")
+        return {"status": "partial_success", "message": "Approved but vector ingestion failed"}
+        
+    return {"status": "success", "message": "QA approved and added to KB"}
 
-    return {"status": "success", "message": "Question added to knowledge base"}
+@app.post("/admin/reject_qa/{qa_id}")
+def reject_qa(qa_id: int, current_user: User = Depends(get_current_active_user)):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    with engine.begin() as conn:
+        # Update status to rejected (or delete?) - Let's keep it as rejected
+        result = conn.execute(text("UPDATE learned_qa SET status = 'rejected' WHERE id = :id"), {"id": qa_id})
+        if result.rowcount == 0:
+             raise HTTPException(status_code=404, detail="QA not found")
+             
+    return {"status": "success", "message": "QA rejected"}
+
+@app.post("/admin/discard_unknown/{id}")
+def discard_unknown_question(id: int, current_user: User = Depends(get_current_active_user)):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    with engine.begin() as conn:
+        result = conn.execute(text("UPDATE chat_logs SET status = 'discarded' WHERE id = :id"), {"id": id})
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Question log not found")
+            
+    return {"status": "success", "message": "Question discarded"}
 
 # 接受用户问题并返回答案
 @app.post("/get_answer")

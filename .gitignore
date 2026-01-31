@@ -7,8 +7,10 @@ node_modules/
 dist/
 build/
 backend/uploads/
+uploads/
 db_data/
 ollama_data/
+data/
 
 # Logs
 *.log
@@ -23,7 +25,9 @@ nohup.out
 
 # Runtime Data
 backend/user_images/
+user_images/
 backend/question_history.json
+question_history.json
 
 # Local Config & Secrets
 tunnel_config.yml

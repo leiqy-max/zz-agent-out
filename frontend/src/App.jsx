@@ -160,11 +160,15 @@ function CropModal({ imageSrc, onConfirm, onCancel }) {
 function Sidebar({ activeView, onViewChange, userRole, username, onLogout, onUpload }) {
   const menuItems = [
     { id: 'chat', label: '智能问答', icon: Bot },
+    // Admin only menus
     ...(userRole === 'admin' ? [
-      { id: 'training', label: '训练模式', icon: Target },
-      { id: 'approval', label: '知识库审批', icon: ShieldCheck },
+      { id: 'approval', label: '审批中心', icon: ShieldCheck },
+      { id: 'unknown', label: '未知问题', icon: Sparkles },
+    ] : []),
+    // Admin and Regular User menus
+    ...(userRole === 'admin' || userRole === 'user' ? [
+      { id: 'training', label: '问答补全', icon: Target },
       { id: 'logs', label: '问答记录', icon: FileText },
-      { id: 'unknown', label: '未知问题学习', icon: Sparkles },
     ] : [])
   ];
 
@@ -232,6 +236,7 @@ function TrainingMode() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [polishing, setPolishing] = useState(false);
 
   const handleSubmit = async () => {
     if (!question.trim() || !answer.trim()) {
@@ -240,14 +245,35 @@ function TrainingMode() {
     }
     setSubmitting(true);
     try {
-      await axios.post('/admin/add_qa', { question, answer });
-      alert("录入成功！");
+      const res = await axios.post('/admin/add_qa', { question, answer });
+      alert(res.data.message || "操作成功！");
       setQuestion("");
       setAnswer("");
     } catch (e) {
-      alert("录入失败: " + (e.response?.data?.detail || e.message));
+      alert("操作失败: " + (e.response?.data?.detail || e.message));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handlePolish = async () => {
+    if (!question.trim() || !answer.trim()) {
+      alert("请先填写问题和草稿答案，AI才能帮您润色");
+      return;
+    }
+    setPolishing(true);
+    try {
+      const res = await axios.post('/api/polish_answer', { 
+        question, 
+        draft_answer: answer 
+      });
+      if (res.data.status === 'success') {
+        setAnswer(res.data.polished_answer);
+      }
+    } catch (e) {
+      alert("润色失败: " + (e.response?.data?.detail || e.message));
+    } finally {
+      setPolishing(false);
     }
   };
 
@@ -256,12 +282,17 @@ function TrainingMode() {
       <div className="max-w-4xl mx-auto w-full">
         <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center">
           <Target className="mr-3 text-blue-600" />
-          训练模式
+          问答补全
         </h2>
         
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-6">
           <div className="bg-blue-50 text-blue-800 p-4 rounded-lg text-sm mb-6">
-            在此模式下，您可以手动录入标准问答对。系统将直接学习这些内容，当用户提出相同或相似问题时，直接返回您设定的答案。
+            在此模式下，您可以手动录入标准问答对。
+            系统将直接学习这些内容，当用户提出相同或相似问题时，直接返回您设定的答案。
+            <br/>
+            <span className="text-xs opacity-75 mt-1 block">
+              * 管理员提交直接生效，普通用户提交需管理员审批。
+            </span>
           </div>
 
           <div>
@@ -278,9 +309,19 @@ function TrainingMode() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              标准答案 (Answer)
-            </label>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-sm font-medium text-gray-700">
+                标准答案 (Answer)
+              </label>
+              <button
+                onClick={handlePolish}
+                disabled={polishing || !question.trim() || !answer.trim()}
+                className="flex items-center text-xs text-purple-600 hover:text-purple-700 bg-purple-50 hover:bg-purple-100 px-3 py-1 rounded-full transition-colors disabled:opacity-50"
+              >
+                <Sparkles size={14} className={cn("mr-1", polishing ? "animate-spin" : "")} />
+                {polishing ? "AI 正在润色..." : "AI 润色优化"}
+              </button>
+            </div>
             <textarea
               value={answer}
               onChange={(e) => setAnswer(e.target.value)}
@@ -342,18 +383,36 @@ function ImageZoomModal({ imageSrc, onClose }) {
 
 // 管理员审批视图
 function AdminView() {
+    const [activeTab, setActiveTab] = useState('docs'); // 'docs' or 'qa'
     const [docs, setDocs] = useState([]);
+    const [qaItems, setQaItems] = useState([]);
     const [loading, setLoading] = useState(false);
     
     useEffect(() => {
-        fetchDocs();
-    }, []);
+        if (activeTab === 'docs') {
+            fetchDocs();
+        } else {
+            fetchQA();
+        }
+    }, [activeTab]);
 
     const fetchDocs = async () => {
         setLoading(true);
         try {
             const res = await axios.get('/pending_docs');
             setDocs(res.data.docs);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchQA = async () => {
+        setLoading(true);
+        try {
+            const res = await axios.get('/admin/pending_qa');
+            setQaItems(res.data.items || []);
         } catch (e) {
             console.error(e);
         } finally {
@@ -380,6 +439,25 @@ function AdminView() {
         }
     };
 
+    const handleApproveQA = async (id) => {
+        try {
+            await axios.post(`/admin/approve_qa/${id}`);
+            fetchQA(); // refresh
+        } catch (e) {
+            alert("操作失败: " + e.message);
+        }
+    };
+
+    const handleRejectQA = async (id) => {
+        if (!window.confirm("确定要拒绝该问答吗？")) return;
+        try {
+            await axios.post(`/admin/reject_qa/${id}`);
+            fetchQA(); // refresh
+        } catch (e) {
+            alert("操作失败: " + e.message);
+        }
+    };
+
     const handleDownload = async (id, filename) => {
         try {
             const response = await axios.get(`/download_doc/${id}`, {
@@ -401,55 +479,136 @@ function AdminView() {
         <div className="h-full flex flex-col bg-gray-50 p-6 overflow-hidden">
             <div className="max-w-6xl mx-auto w-full h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-white">
-                    <h2 className="text-xl font-bold flex items-center text-gray-800">
-                        <ShieldCheck className="mr-2 text-blue-600" />
-                        用户上传文档审批
-                    </h2>
-                    <button onClick={fetchDocs} className="p-2 hover:bg-gray-100 rounded-full transition-colors" title="刷新">
+                    <div className="flex items-center space-x-4">
+                        <h2 className="text-xl font-bold flex items-center text-gray-800 mr-4">
+                            <ShieldCheck className="mr-2 text-blue-600" />
+                            审批中心
+                        </h2>
+                        
+                        <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg">
+                            <button
+                                onClick={() => setActiveTab('docs')}
+                                className={cn(
+                                    "px-4 py-1.5 rounded-md text-sm font-medium transition-all",
+                                    activeTab === 'docs' 
+                                        ? "bg-white text-blue-600 shadow-sm" 
+                                        : "text-gray-500 hover:text-gray-700"
+                                )}
+                            >
+                                文档审批
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('qa')}
+                                className={cn(
+                                    "px-4 py-1.5 rounded-md text-sm font-medium transition-all",
+                                    activeTab === 'qa' 
+                                        ? "bg-white text-blue-600 shadow-sm" 
+                                        : "text-gray-500 hover:text-gray-700"
+                                )}
+                            >
+                                问答审批
+                            </button>
+                        </div>
+                    </div>
+
+                    <button 
+                        onClick={activeTab === 'docs' ? fetchDocs : fetchQA} 
+                        className="p-2 hover:bg-gray-100 rounded-full transition-colors" 
+                        title="刷新"
+                    >
                         <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
                     </button>
                 </div>
                 
                 <div className="flex-1 overflow-y-auto p-6">
-                    {loading ? (
-                        <div className="text-center py-8 text-gray-500">加载中...</div>
-                    ) : docs.length === 0 ? (
-                        <div className="text-center py-8 text-gray-500">暂无待审批文档</div>
-                    ) : (
-                        <div className="space-y-3">
-                            {docs.map(doc => (
-                                <div key={doc.id} className="flex items-center justify-between bg-gray-50 p-4 rounded-lg border border-gray-100">
-                                    <div className="flex flex-col">
-                                        <span className="font-medium text-gray-800">{doc.filename}</span>
-                                        <div className="text-xs text-gray-500 flex space-x-2 mt-1">
-                                            <span>上传者: {doc.uploader}</span>
-                                            <span>时间: {doc.created_at}</span>
+                    {activeTab === 'docs' ? (
+                        // Docs List
+                        loading ? (
+                            <div className="text-center py-8 text-gray-500">加载中...</div>
+                        ) : docs.length === 0 ? (
+                            <div className="text-center py-8 text-gray-500">暂无待审批文档</div>
+                        ) : (
+                            <div className="space-y-3">
+                                {docs.map(doc => (
+                                    <div key={doc.id} className="flex items-center justify-between bg-gray-50 p-4 rounded-lg border border-gray-100">
+                                        <div className="flex flex-col">
+                                            <span className="font-medium text-gray-800">{doc.filename}</span>
+                                            <div className="text-xs text-gray-500 flex space-x-2 mt-1">
+                                                <span>上传者: {doc.uploader}</span>
+                                                <span>时间: {doc.created_at}</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex space-x-2">
+                                            <button 
+                                                onClick={() => handleDownload(doc.id, doc.filename)}
+                                                className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                title="下载文档"
+                                            >
+                                                <Download size={18} />
+                                            </button>
+                                            <button 
+                                                onClick={() => handleReject(doc.id)}
+                                                className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-md text-sm font-medium transition-colors"
+                                            >
+                                                拒绝
+                                            </button>
+                                            <button 
+                                                onClick={() => handleApprove(doc.id)}
+                                                className="px-3 py-1.5 bg-green-50 text-green-600 hover:bg-green-100 rounded-md text-sm font-medium transition-colors"
+                                            >
+                                                通过
+                                            </button>
                                         </div>
                                     </div>
-                                    <div className="flex space-x-2">
-                                        <button 
-                                            onClick={() => handleDownload(doc.id, doc.filename)}
-                                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                            title="下载文档"
-                                        >
-                                            <Download size={18} />
-                                        </button>
-                                        <button 
-                                            onClick={() => handleReject(doc.id)}
-                                            className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-md text-sm font-medium transition-colors"
-                                        >
-                                            拒绝
-                                        </button>
-                                        <button 
-                                            onClick={() => handleApprove(doc.id)}
-                                            className="px-3 py-1.5 bg-green-50 text-green-600 hover:bg-green-100 rounded-md text-sm font-medium transition-colors"
-                                        >
-                                            通过
-                                        </button>
+                                ))}
+                            </div>
+                        )
+                    ) : (
+                        // QA List
+                        loading ? (
+                            <div className="text-center py-8 text-gray-500">加载中...</div>
+                        ) : qaItems.length === 0 ? (
+                            <div className="text-center py-8 text-gray-500">暂无待审批问答</div>
+                        ) : (
+                            <div className="space-y-4">
+                                {qaItems.map(qa => (
+                                    <div key={qa.id} className="bg-gray-50 p-4 rounded-lg border border-gray-100">
+                                        <div className="flex justify-between items-start mb-2 border-b border-gray-200 pb-2">
+                                            <div className="flex items-center space-x-2">
+                                                <span className="font-bold text-gray-700">{qa.username}</span>
+                                                <span className="text-gray-400 text-xs">{qa.created_at}</span>
+                                            </div>
+                                            <div className="flex space-x-2">
+                                                <button 
+                                                    onClick={() => handleRejectQA(qa.id)}
+                                                    className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-md text-sm font-medium transition-colors"
+                                                >
+                                                    拒绝
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleApproveQA(qa.id)}
+                                                    className="px-3 py-1.5 bg-green-50 text-green-600 hover:bg-green-100 rounded-md text-sm font-medium transition-colors"
+                                                >
+                                                    通过
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="mb-2">
+                                            <div className="font-semibold text-gray-600 mb-1">问题：</div>
+                                            <div className="text-gray-800 bg-white p-2 rounded border border-gray-100 whitespace-pre-wrap">
+                                                {qa.question}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className="font-semibold text-gray-600 mb-1">答案：</div>
+                                            <div className="text-gray-600 bg-blue-50/50 p-2 rounded border border-blue-100/50 whitespace-pre-wrap max-h-32 overflow-y-auto">
+                                                {qa.answer}
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
+                                ))}
+                            </div>
+                        )
                     )}
                 </div>
             </div>
@@ -684,13 +843,23 @@ function UnknownQuestionsView() {
         }
     };
 
+    const handleDiscard = async (id) => {
+        if (!window.confirm("确定要丢弃该问题吗？丢弃后将不再出现在此处。")) return;
+        try {
+            await axios.post(`/admin/discard_unknown/${id}`);
+            fetchLogs();
+        } catch (e) {
+            alert("操作失败: " + e.message);
+        }
+    };
+
     return (
         <div className="h-full flex flex-col bg-gray-50 p-6 overflow-hidden">
              <div className="max-w-6xl mx-auto w-full h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-white">
                     <h2 className="text-xl font-bold flex items-center text-gray-800">
                         <Sparkles className="mr-2 text-purple-600" />
-                        未知问题学习
+                        未知问题
                     </h2>
                     <button onClick={fetchLogs} className="p-2 hover:bg-gray-100 rounded-full transition-colors" title="刷新">
                         <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
