@@ -22,6 +22,7 @@ export default defineConfig({
       '/download_doc': { target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8000', changeOrigin: true },
       '/download_source': { target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8000', changeOrigin: true },
       '/documents': { target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8000', changeOrigin: true },
+      '/api': { target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8000', changeOrigin: true },
       '/admin': { target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8000', changeOrigin: true },
       '/user_images': { target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8000', changeOrigin: true },
       '/debug': { target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8000', changeOrigin: true },

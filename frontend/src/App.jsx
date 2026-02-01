@@ -8,7 +8,8 @@ import KnowledgeDocs from './KnowledgeDocs';
 import { 
   Send, User, Bot, Image as ImageIcon, Paperclip, 
   Globe, Sparkles, X, MoreHorizontal, Code, UploadCloud, FileText,
-  Scissors, Check, RotateCcw, RefreshCw, ThumbsUp, ThumbsDown, LogOut, Shield, ShieldCheck, Download, Target, Menu, Database, Trash2
+  Scissors, Check, RotateCcw, RefreshCw, ThumbsUp, ThumbsDown, LogOut, Shield, ShieldCheck, Download, Target, Menu, Database, Trash2,
+  BarChart2, MessageSquare, Calendar, HelpCircle, BookOpen, Award
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -157,6 +158,248 @@ function CropModal({ imageSrc, onConfirm, onCancel }) {
   );
 }
 
+// 数据看板组件
+function DashboardView({ userRole }) {
+    const [stats, setStats] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState('today_questions'); // Default tab
+
+    useEffect(() => {
+        fetchStats();
+    }, []);
+
+    const fetchStats = async () => {
+        try {
+            const res = await axios.get('/api/dashboard/stats');
+            console.log("Fetched stats:", res.data);
+            setStats(res.data);
+            // Set default tab based on role if needed, but today_questions works for both (mapped correctly)
+            if (userRole !== 'admin') {
+                setActiveTab('my_questions');
+            }
+        } catch (e) {
+            console.error("Error fetching stats:", e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (loading) return <div className="h-full flex items-center justify-center text-gray-500">加载中...</div>;
+    if (!stats) return <div className="h-full flex items-center justify-center text-red-500">加载失败</div>;
+
+    return (
+        <div className="h-full bg-gray-50 p-6 flex flex-col overflow-hidden">
+            <h1 className="text-2xl font-bold mb-6 text-gray-800 flex-shrink-0">数据看板</h1>
+            
+            {/* Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8 flex-shrink-0">
+                {userRole === 'admin' ? (
+                    <>
+                        <StatCard 
+                            title="今日提问" 
+                            value={stats.today_questions} 
+                            icon={MessageSquare} 
+                            color="blue" 
+                            isActive={activeTab === 'today_questions'}
+                            onClick={() => setActiveTab('today_questions')}
+                        />
+                        <StatCard 
+                            title="本月提问" 
+                            value={stats.month_questions} 
+                            icon={Calendar} 
+                            color="indigo" 
+                            isActive={activeTab === 'month_questions'}
+                            onClick={() => setActiveTab('month_questions')}
+                        />
+                        <StatCard 
+                            title="待解问题" 
+                            value={stats.pending_questions} 
+                            icon={HelpCircle} 
+                            color="orange" 
+                            isActive={activeTab === 'pending_questions'}
+                            onClick={() => setActiveTab('pending_questions')}
+                        />
+                        <StatCard 
+                            title="本月习得知识" 
+                            value={stats.month_learned} 
+                            icon={BookOpen} 
+                            color="green" 
+                            isActive={activeTab === 'month_learned'}
+                            onClick={() => setActiveTab('month_learned')}
+                        />
+                    </>
+                ) : (
+                    <>
+                        <StatCard 
+                            title="我的提问" 
+                            value={stats.my_questions} 
+                            icon={MessageSquare} 
+                            color="blue" 
+                            isActive={activeTab === 'my_questions'}
+                            onClick={() => setActiveTab('my_questions')}
+                        />
+                        <StatCard 
+                            title="我的贡献" 
+                            value={stats.my_contributions} 
+                            icon={Award} 
+                            color="purple" 
+                            isActive={activeTab === 'my_contributions'}
+                            onClick={() => setActiveTab('my_contributions')}
+                        />
+                    </>
+                )}
+            </div>
+
+            {/* Detail View */}
+            <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
+                <div className="p-4 border-b border-gray-200 bg-gray-50 font-medium text-gray-700 flex items-center">
+                    {activeTab === 'today_questions' && <><MessageSquare size={18} className="mr-2"/> 今日提问详情</>}
+                    {activeTab === 'month_questions' && <><Calendar size={18} className="mr-2"/> 本月提问详情</>}
+                    {activeTab === 'pending_questions' && <><HelpCircle size={18} className="mr-2"/> 待解问题详情</>}
+                    {activeTab === 'month_learned' && <><BookOpen size={18} className="mr-2"/> 本月习得知识详情</>}
+                    {activeTab === 'my_questions' && <><MessageSquare size={18} className="mr-2"/> 我的提问记录</>}
+                    {activeTab === 'my_contributions' && <><Award size={18} className="mr-2"/> 我的贡献记录</>}
+                </div>
+                <div className="flex-1 overflow-hidden relative">
+                    {/* Render different views based on activeTab */}
+                    {(activeTab === 'today_questions' || activeTab === 'month_questions' || activeTab === 'my_questions') && (
+                        <DashboardLogsTable 
+                            filterDate={activeTab === 'today_questions' ? 'today' : (activeTab === 'month_questions' ? 'month' : null)} 
+                            scope={activeTab === 'my_questions' ? 'me' : 'all'}
+                        />
+                    )}
+                    {activeTab === 'pending_questions' && (
+                        <UnknownQuestionsView userRole={userRole} embed={true} />
+                    )}
+                    {(activeTab === 'month_learned' || activeTab === 'my_contributions') && (
+                        <LearningRecordsView 
+                            userRole={userRole} 
+                            embed={true} 
+                            filterScope={activeTab === 'my_contributions' ? 'me' : 'all'}
+                            filterDate={activeTab === 'month_learned' ? 'month' : null}
+                        />
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function StatCard({ title, value, icon: Icon, color, isActive, onClick }) {
+    const colorClasses = {
+        blue: "bg-blue-50 text-blue-600 border-blue-200",
+        indigo: "bg-indigo-50 text-indigo-600 border-indigo-200",
+        orange: "bg-orange-50 text-orange-600 border-orange-200",
+        green: "bg-green-50 text-green-600 border-green-200",
+        purple: "bg-purple-50 text-purple-600 border-purple-200",
+    };
+
+    return (
+        <div 
+            onClick={onClick}
+            className={cn(
+                "bg-white p-6 rounded-xl shadow-sm border flex items-center space-x-4 cursor-pointer transition-all",
+                isActive ? "ring-2 ring-blue-500 border-transparent shadow-md transform scale-[1.02]" : "border-gray-100 hover:shadow-md hover:border-blue-200"
+            )}
+        >
+            <div className={`p-4 rounded-full ${colorClasses[color] || colorClasses.blue}`}>
+                <Icon size={24} />
+            </div>
+            <div>
+                <div className="flex items-baseline gap-2">
+                    <p className="text-gray-500 text-sm font-medium">{title}</p>
+                    <p className="text-xl font-bold text-gray-800">{value !== undefined && value !== null ? value : '-'}</p>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// Reusable Logs Table for Dashboard
+function DashboardLogsTable({ filterDate, scope }) {
+    const [logs, setLogs] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [page, setPage] = useState(1);
+    const [total, setTotal] = useState(0);
+    const limit = 10;
+
+    useEffect(() => {
+        fetchLogs();
+    }, [page, filterDate, scope]);
+
+    const fetchLogs = async () => {
+        setLoading(true);
+        try {
+            let url = `/admin/chat_logs?page=${page}&limit=${limit}&scope=${scope}`;
+            if (filterDate) {
+                url += `&filter_date=${filterDate}`;
+            }
+            const res = await axios.get(url);
+            setLogs(res.data.logs || []);
+            setTotal(res.data.total || 0);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="h-full flex flex-col">
+            <div className="flex-1 overflow-y-auto p-4">
+                <table className="w-full text-left border-collapse">
+                    <thead>
+                        <tr className="border-b border-gray-200 text-gray-500 text-sm">
+                            <th className="p-3 font-medium">提问时间</th>
+                            <th className="p-3 font-medium">用户</th>
+                            <th className="p-3 font-medium">问题</th>
+                            <th className="p-3 font-medium">回答预览</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                        {loading ? (
+                            <tr><td colSpan="4" className="p-8 text-center text-gray-400">加载中...</td></tr>
+                        ) : logs.length === 0 ? (
+                            <tr><td colSpan="4" className="p-8 text-center text-gray-400">暂无数据</td></tr>
+                        ) : (
+                            logs.map(log => (
+                                <tr key={log.id} className="hover:bg-gray-50 transition-colors text-sm">
+                                    <td className="p-3 text-gray-500 w-40">{log.created_at}</td>
+                                    <td className="p-3 font-medium text-gray-700 w-32 truncate">{log.username}</td>
+                                    <td className="p-3 text-gray-800 max-w-xs truncate" title={log.question}>{log.question}</td>
+                                    <td className="p-3 text-gray-600 max-w-sm truncate" title={log.answer}>{log.answer}</td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
+             {/* Pagination */}
+             {total > limit && (
+                <div className="p-4 border-t border-gray-200 flex justify-center space-x-2 bg-white">
+                    <button 
+                        disabled={page === 1}
+                        onClick={() => setPage(p => p - 1)}
+                        className="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50 text-sm"
+                    >
+                        上一页
+                    </button>
+                    <span className="px-3 py-1 text-gray-600 text-sm">
+                        {page} / {Math.ceil(total / limit)}
+                    </span>
+                    <button 
+                        disabled={page * limit >= total}
+                        onClick={() => setPage(p => p + 1)}
+                        className="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50 text-sm"
+                    >
+                        下一页
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
 // 侧边栏组件
 function Sidebar({ activeView, onViewChange, userRole, username, onLogout, onUpload }) {
   const menuGroups = [
@@ -165,7 +408,6 @@ function Sidebar({ activeView, onViewChange, userRole, username, onLogout, onUpl
       items: [
         { id: 'chat', label: '智能问答', icon: Bot },
         { id: 'knowledge', label: '文档资源', icon: FileText },
-        { id: 'logs', label: '提问足迹', icon: FileText },
       ]
     },
     {
@@ -173,15 +415,23 @@ function Sidebar({ activeView, onViewChange, userRole, username, onLogout, onUpl
       items: [
         { id: 'unknown', label: '待解问题', icon: Sparkles },
         { id: 'training', label: '知识录入', icon: Target },
-        { id: 'learning', label: '进化历程', icon: Database },
       ]
     },
+    ...(userRole !== 'admin' ? [{
+      title: '运行简报',
+      items: [
+        { id: 'learning', label: '进化历程', icon: Database },
+        { id: 'dashboard', label: '数据看板', icon: BarChart2 },
+      ]
+    }] : []),
     {
       title: '运维管理',
       adminOnly: true,
       items: [
         { id: 'approval', label: '审批中心', icon: ShieldCheck },
         { id: 'global_logs', label: '全局日志', icon: Globe },
+        { id: 'dashboard', label: '数据看板', icon: BarChart2 },
+        { id: 'learning', label: '进化历程', icon: Database },
       ]
     }
   ];
@@ -663,7 +913,7 @@ function AdminView() {
 }
 
 // 学习记录视图
-function LearningRecordsView({ userRole }) {
+function LearningRecordsView({ userRole, filterScope, filterDate, embed }) {
     const [records, setRecords] = useState([]);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
@@ -672,12 +922,16 @@ function LearningRecordsView({ userRole }) {
 
     useEffect(() => {
         fetchRecords();
-    }, [page]);
+    }, [page, filterScope, filterDate]);
 
     const fetchRecords = async () => {
         setLoading(true);
         try {
-            const res = await axios.get(`/admin/learning_records?page=${page}&limit=${limit}`);
+            let url = `/admin/learning_records?page=${page}&limit=${limit}`;
+            if (filterScope) url += `&scope=${filterScope}`;
+            if (filterDate) url += `&filter_date=${filterDate}`;
+            
+            const res = await axios.get(url);
             setRecords(res.data.records || []);
             setTotal(res.data.total || 0);
         } catch (e) {
@@ -700,13 +954,15 @@ function LearningRecordsView({ userRole }) {
     };
 
     return (
-        <div className="h-full flex flex-col bg-gray-50 p-6 overflow-hidden">
-            <h2 className="text-xl font-bold mb-4 text-green-700 flex items-center">
-                <Database size={24} className="mr-2" />
-                进化历程
-            </h2>
+        <div className={`h-full flex flex-col ${embed ? '' : 'bg-gray-50 p-6'} overflow-hidden`}>
+            {!embed && (
+                <h2 className="text-xl font-bold mb-4 text-green-700 flex items-center">
+                    <Database size={24} className="mr-2" />
+                    进化历程
+                </h2>
+            )}
 
-            <div className="flex-1 overflow-auto bg-white rounded-lg shadow">
+            <div className={`flex-1 overflow-auto ${embed ? '' : 'bg-white rounded-lg shadow'}`}>
                 <table className="w-full text-left border-collapse">
                     <thead>
                         <tr className="bg-gray-100 border-b border-gray-200">
@@ -992,6 +1248,23 @@ function GlobalLogsView() {
         }
     };
 
+    const handleExport = async () => {
+        try {
+            const response = await axios.get('/admin/export_global_logs', {
+                responseType: 'blob',
+            });
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', 'global_logs.csv');
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        } catch (e) {
+            alert("导出失败: " + (e.response?.data?.detail || e.message));
+        }
+    };
+
     const renderLogItem = (log) => {
         // Status Colors
         const statusColors = {
@@ -1061,9 +1334,14 @@ function GlobalLogsView() {
                         <Globe className="mr-2 text-blue-600" />
                         全局日志
                     </h2>
-                    <button onClick={fetchLogs} className="p-2 hover:bg-gray-100 rounded-full transition-colors" title="刷新">
-                        <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
-                    </button>
+                    <div className="flex space-x-2">
+                        <button onClick={handleExport} className="p-2 hover:bg-gray-100 rounded-full transition-colors" title="导出全部">
+                            <Download size={20} className="text-gray-600" />
+                        </button>
+                        <button onClick={fetchLogs} className="p-2 hover:bg-gray-100 rounded-full transition-colors" title="刷新">
+                            <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+                        </button>
+                    </div>
                 </div>
                 
                 <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
@@ -2309,11 +2587,11 @@ function App() {
             {activeView === 'chat' && <ChatInterface auth={auth} onLogout={handleLogout} />}
             {activeView === 'training' && <TrainingMode />}
             {activeView === 'approval' && <AdminView />}
-            {activeView === 'logs' && <UserLogsView />}
             {activeView === 'global_logs' && <GlobalLogsView />}
             {activeView === 'unknown' && <UnknownQuestionsView userRole={auth.role} />}
             {activeView === 'learning' && <LearningRecordsView userRole={auth.role} />}
             {activeView === 'knowledge' && <KnowledgeDocs auth={auth} />}
+            {activeView === 'dashboard' && <DashboardView userRole={auth.role} />}
          </div>
       </div>
 

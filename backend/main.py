@@ -1,6 +1,8 @@
 import os
 import sys
 import yaml
+import csv
+import io
 
 # Support for Intranet Binary: Load config.yaml if exists
 if os.path.exists("config.yaml"):
@@ -43,7 +45,7 @@ if os.path.exists("config.yaml"):
 
 from fastapi import FastAPI, Request, UploadFile, File, Depends, HTTPException, status, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security import OAuth2PasswordRequestForm
@@ -544,7 +546,13 @@ def reject_doc(doc_id: int, current_user: User = Depends(get_current_active_user
     return {"message": "Document rejected"}
 
 @app.get("/admin/chat_logs")
-def get_admin_chat_logs(page: int = 1, limit: int = 20, scope: str = 'all', current_user: User = Depends(get_current_active_user)):
+def get_admin_chat_logs(
+    page: int = 1, 
+    limit: int = 20, 
+    scope: str = 'all', 
+    filter_date: str = None,
+    current_user: User = Depends(get_current_active_user)
+):
     # Scope: 'all' (default, admin only) or 'me' (current user)
     
     offset = (page - 1) * limit
@@ -559,20 +567,29 @@ def get_admin_chat_logs(page: int = 1, limit: int = 20, scope: str = 'all', curr
         filter_username = current_user.username
     
     with engine.connect() as conn:
-        # Build Count Query
-        count_sql = "SELECT COUNT(*) FROM chat_logs"
+        # Build Query Components
+        where_clauses = []
+        params = {"limit": limit, "offset": offset}
+        
         if filter_username:
-            count_sql += " WHERE username = :username"
+            where_clauses.append("username = :username")
+            params["username"] = filter_username
+            
+        # Date filter
+        if filter_date == 'today':
+            where_clauses.append("created_at::date = CURRENT_DATE")
+        elif filter_date == 'month':
+            where_clauses.append("date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)")
+            
+        where_str = ""
+        if where_clauses:
+            where_str = "WHERE " + " AND ".join(where_clauses)
+        
+        # Build Count Query
+        count_sql = f"SELECT COUNT(*) FROM chat_logs {where_str}"
         
         # Build Data Query
-        data_sql = "SELECT id, username, question, answer, image_path, created_at, sources FROM chat_logs"
-        if filter_username:
-            data_sql += " WHERE username = :username"
-        data_sql += " ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
-        
-        params = {"limit": limit, "offset": offset}
-        if filter_username:
-            params["username"] = filter_username
+        data_sql = f"SELECT id, username, question, answer, image_path, created_at, sources FROM chat_logs {where_str} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
             
         total = conn.execute(text(count_sql), params).scalar()
         result = conn.execute(text(data_sql), params).fetchall()
@@ -638,6 +655,52 @@ def get_global_logs(page: int = 1, limit: int = 20, current_user: User = Depends
             })
             
     return {"total": total, "logs": logs, "page": page, "limit": limit}
+
+@app.get("/admin/export_global_logs")
+def export_global_logs(current_user: User = Depends(get_current_active_user)):
+    if current_user.role != 'admin':
+        raise HTTPException(status_code=403, detail="Permission denied")
+        
+    with engine.connect() as conn:
+        # Union Query for Global Logs (No Pagination)
+        # We cast columns to text to ensure compatibility
+        sql = """
+        SELECT type, id, username, content, status, created_at, details FROM (
+            SELECT 'chat' as type, id, username, question as content, status, created_at, answer as details FROM chat_logs
+            UNION ALL
+            SELECT 'doc_upload' as type, id, uploader as username, filename as content, status, created_at, file_path as details FROM uploaded_files
+            UNION ALL
+            SELECT 'qa_submission' as type, id, username, question as content, status, created_at, answer as details FROM learned_qa
+        ) as unified_logs
+        ORDER BY created_at DESC
+        """
+        
+        result = conn.execute(text(sql)).fetchall()
+        
+        # Create CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Type', 'ID', 'Username', 'Content', 'Status', 'Created At', 'Details'])
+        
+        for row in result:
+            writer.writerow([
+                row[0], 
+                row[1], 
+                row[2], 
+                row[3], 
+                row[4], 
+                str(row[5]), 
+                row[6]
+            ])
+            
+        output.seek(0)
+        
+        # Use utf-8-sig for Excel compatibility with Chinese characters
+        return StreamingResponse(
+            iter([output.getvalue().encode('utf-8-sig')]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=global_logs.csv"}
+        )
 
 
 @app.post("/reprocess_docs")
@@ -965,24 +1028,92 @@ def delete_qa(qa_id: int, current_user: User = Depends(get_current_active_user))
         
     return {"message": "QA deleted successfully"}
 
+@app.get("/api/dashboard/stats")
+def get_dashboard_stats(current_user: User = Depends(get_current_active_user)):
+    """
+    Get dashboard statistics based on user role.
+    """
+    stats = {}
+    
+    with engine.connect() as conn:
+        if current_user.role == 'admin':
+            # 1. Today's Questions
+            today_count = conn.execute(text("SELECT COUNT(*) FROM chat_logs WHERE created_at::date = CURRENT_DATE")).scalar()
+            
+            # 2. This Month's Questions
+            month_count = conn.execute(text("SELECT COUNT(*) FROM chat_logs WHERE date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)")).scalar()
+            
+            # 3. Pending Questions (Unknown status)
+            pending_count = conn.execute(text("SELECT COUNT(*) FROM chat_logs WHERE status = 'unknown'")).scalar()
+            
+            # 4. This Month's Learned Knowledge (Approved)
+            learned_month_count = conn.execute(text("SELECT COUNT(*) FROM learned_qa WHERE status = 'approved' AND date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)")).scalar()
+            
+            stats = {
+                "today_questions": today_count,
+                "month_questions": month_count,
+                "pending_questions": pending_count,
+                "month_learned": learned_month_count
+            }
+        else:
+            # User View
+            # 1. My Total Questions
+            my_questions = conn.execute(text("SELECT COUNT(*) FROM chat_logs WHERE username = :u"), {"u": current_user.username}).scalar()
+            
+            # 2. My Contributions (Approved Learned QA)
+            my_contributions = conn.execute(text("SELECT COUNT(*) FROM learned_qa WHERE username = :u AND status = 'approved'"), {"u": current_user.username}).scalar()
+            
+            stats = {
+                "my_questions": my_questions,
+                "my_contributions": my_contributions
+            }
+            
+    return stats
+
 @app.get("/admin/learning_records")
-def get_learning_records(page: int = 1, limit: int = 10, current_user: User = Depends(get_current_active_user)):
+def get_learning_records(
+    page: int = 1, 
+    limit: int = 10, 
+    scope: str = 'all',
+    filter_date: str = None,
+    current_user: User = Depends(get_current_active_user)
+):
     # Both admin and user can view learning records
     offset = (page - 1) * limit
     
     with engine.connect() as conn:
+        # Build Query
+        where_clauses = []
+        params = {"limit": limit, "offset": offset}
+        
+        # Scope filter
+        if scope == 'me':
+            where_clauses.append("username = :username")
+            params["username"] = current_user.username
+            
+        # Date filter (Dashboard context: 'month' implies 'approved' + 'current month')
+        if filter_date == 'month':
+            where_clauses.append("date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE)")
+            where_clauses.append("status = 'approved'")
+            
+        where_str = ""
+        if where_clauses:
+            where_str = "WHERE " + " AND ".join(where_clauses)
+            
         # Get total count
-        total = conn.execute(text("SELECT COUNT(*) FROM learned_qa")).scalar()
+        count_sql = f"SELECT COUNT(*) FROM learned_qa {where_str}"
+        total = conn.execute(text(count_sql), params).scalar()
         
         # Get records
-        query = text("""
+        data_sql = f"""
             SELECT id, question, answer, status, username, created_at 
             FROM learned_qa 
+            {where_str}
             ORDER BY id DESC 
             LIMIT :limit OFFSET :offset
-        """)
+        """
         
-        rows = conn.execute(query, {"limit": limit, "offset": offset}).fetchall()
+        rows = conn.execute(text(data_sql), params).fetchall()
         
         records = []
         for row in rows:

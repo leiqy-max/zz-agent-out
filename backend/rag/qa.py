@@ -77,6 +77,30 @@ CHAT_PROMPT = """你是一名资深运维工程师助手。
 2. 如果是**专业技术问题**或**业务咨询**：由于未检索到相关文档，请明确告知用户“未在现有运维知识库中找到标准处置方案，请联系后台支撑。”。
 """
 
+CLASSIFY_PROMPT = """你是一个意图识别助手。
+请判断用户的输入是“闲聊”还是“专业问题”。
+- 闲聊：打招呼、问候、夸奖、询问天气、个人情感等非技术类内容。
+- 专业问题：涉及运维、技术、业务流程、故障排查、系统操作等内容。
+
+用户输入：{question}
+
+请仅输出类别名称（“闲聊”或“专业问题”），不要包含其他文字。"""
+
+
+def classify_intent(question: str) -> str:
+    """
+    判断用户意图
+    """
+    try:
+        prompt = CLASSIFY_PROMPT.format(question=question)
+        response = call_llm(prompt)
+        if "闲聊" in response:
+            return "chitchat"
+        return "technical"
+    except Exception:
+        # Fallback to technical if classification fails
+        return "technical"
+
 
 def build_context(docs):
     context_parts = []
@@ -107,7 +131,24 @@ def build_prompt(question: str, context: str) -> str:
 """
 
 def answer_question(question: str, image: Optional[str] = None, kb_type: str = "user") -> Dict:
+    # 0. Intent Classification
+    # Skip classification if image is present (usually technical) or if explicitly technical
+    if not image:
+        intent = classify_intent(question)
+        if intent == "chitchat":
+            # Direct chat without retrieval
+            chat_prompt = f"用户输入：{question}\n\n请自然、友好地回应用户。不要提及知识库或文档。"
+            answer = call_llm(chat_prompt, image=image)
+            return {
+                "answer": answer,
+                "sources": []
+            }
+
     # 1. 检索 (传入 kb_type)
+    # Define threshold for similarity distance (lower is better for cosine distance in pgvector)
+    # Typically 0.5-0.7 is a reasonable threshold for semantic similarity
+    SIMILARITY_THRESHOLD = 0.8
+    
     docs = retrieve_similar_documents(question, kb_type=kb_type)
 
     sources = []
@@ -115,6 +156,12 @@ def answer_question(question: str, image: Optional[str] = None, kb_type: str = "
     if docs:
         for doc in docs:
             # doc structure: (id, content, metadata, distance)
+            distance = doc[3] if len(doc) > 3 else 1.0
+            
+            # Filter by distance threshold
+            if distance > SIMILARITY_THRESHOLD:
+                continue
+                
             meta = doc[2]
             if meta and "filename" in meta:
                 filename = meta.get("filename")
@@ -123,12 +170,15 @@ def answer_question(question: str, image: Optional[str] = None, kb_type: str = "
                         "id": doc[0],
                         "filename": filename,
                         "source": meta.get("source"),
-                        "score": doc[3] if len(doc) > 3 else 0.0
+                        "score": distance
                     })
                     seen_filenames.add(filename)
+    
+    # Re-check docs after filtering
+    valid_docs = [d for d in docs if (d[3] if len(d) > 3 else 1.0) <= SIMILARITY_THRESHOLD]
 
     # 2. 构建 Prompt
-    context = build_context(docs) if docs else "（未检索到相关文档）"
+    context = build_context(valid_docs) if valid_docs else "（未检索到相关文档）"
     
     # 组合 System Prompt 和 User Prompt
     full_prompt = f"{SYSTEM_PROMPT}\n\n{build_prompt(question, context)}"
