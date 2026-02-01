@@ -8,7 +8,7 @@ import KnowledgeDocs from './KnowledgeDocs';
 import { 
   Send, User, Bot, Image as ImageIcon, Paperclip, 
   Globe, Sparkles, X, MoreHorizontal, Code, UploadCloud, FileText,
-  Scissors, Check, RotateCcw, RefreshCw, ThumbsUp, ThumbsDown, LogOut, Shield, ShieldCheck, Download, Target, Menu, Database
+  Scissors, Check, RotateCcw, RefreshCw, ThumbsUp, ThumbsDown, LogOut, Shield, ShieldCheck, Download, Target, Menu, Database, Trash2
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -159,20 +159,31 @@ function CropModal({ imageSrc, onConfirm, onCancel }) {
 
 // 侧边栏组件
 function Sidebar({ activeView, onViewChange, userRole, username, onLogout, onUpload }) {
-  const menuItems = [
-    { id: 'chat', label: '智能问答', icon: Bot },
-    // Admin only menus
-    ...(userRole === 'admin' ? [
-      { id: 'approval', label: '审批中心', icon: ShieldCheck },
-    ] : []),
-    // Admin and Regular User menus
-    ...(userRole === 'admin' || userRole === 'user' ? [
-      { id: 'unknown', label: '未知问题', icon: Sparkles },
-      { id: 'training', label: '问答补全', icon: Target },
-      { id: 'logs', label: '问答记录', icon: FileText },
-      { id: 'learning', label: '学习记录', icon: Database },
-      { id: 'knowledge', label: '知识文档', icon: FileText },
-    ] : [])
+  const menuGroups = [
+    {
+      title: '智能助手',
+      items: [
+        { id: 'chat', label: '智能问答', icon: Bot },
+        { id: 'knowledge', label: '文档资源', icon: FileText },
+        { id: 'logs', label: '提问足迹', icon: FileText },
+      ]
+    },
+    {
+      title: '知识共建',
+      items: [
+        { id: 'unknown', label: '待解问题', icon: Sparkles },
+        { id: 'training', label: '知识录入', icon: Target },
+        { id: 'learning', label: '进化历程', icon: Database },
+      ]
+    },
+    {
+      title: '运维管理',
+      adminOnly: true,
+      items: [
+        { id: 'approval', label: '审批中心', icon: ShieldCheck },
+        { id: 'global_logs', label: '全局日志', icon: Globe },
+      ]
+    }
   ];
 
   return (
@@ -184,26 +195,38 @@ function Sidebar({ activeView, onViewChange, userRole, username, onLogout, onUpl
         <span className="font-bold text-gray-800 text-lg">Ops Agent</span>
       </div>
       
-      <div className="flex-1 overflow-y-auto py-4 space-y-1">
-        {menuItems.map(item => (
-          <button
-            key={item.id}
-            onClick={() => onViewChange(item.id)}
-            className={cn(
-              "w-full flex items-center space-x-3 px-4 py-3 text-sm font-medium transition-colors",
-              activeView === item.id 
-                ? "bg-blue-50 text-blue-600 border-r-4 border-blue-600" 
-                : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-            )}
-          >
-            <item.icon size={18} />
-            <span>{item.label}</span>
-          </button>
-        ))}
+      <div className="flex-1 overflow-y-auto py-4 space-y-6">
+        {menuGroups.map((group, index) => {
+          if (group.adminOnly && userRole !== 'admin') return null;
+          
+          return (
+            <div key={index}>
+              <div className="px-4 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                [{group.title}]
+              </div>
+              <div className="space-y-1">
+                {group.items.map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => onViewChange(item.id)}
+                    className={cn(
+                      "w-full flex items-center space-x-3 px-4 py-2 text-sm font-medium transition-colors",
+                      activeView === item.id 
+                        ? "bg-blue-50 text-blue-600 border-r-4 border-blue-600" 
+                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                    )}
+                  >
+                    <item.icon size={18} />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="p-4 border-t border-gray-200 space-y-4">
-        {/* Upload Button for Admin and User */}
         {(userRole === 'admin' || userRole === 'user') && (
           <button
              onClick={onUpload}
@@ -640,7 +663,7 @@ function AdminView() {
 }
 
 // 学习记录视图
-function LearningRecordsView() {
+function LearningRecordsView({ userRole }) {
     const [records, setRecords] = useState([]);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
@@ -665,11 +688,22 @@ function LearningRecordsView() {
         }
     };
 
+    const handleDelete = async (id) => {
+        if (!window.confirm("确定要删除这条学习记录吗？删除后将同时从知识库中移除。")) return;
+        try {
+            await axios.delete(`/admin/delete_qa/${id}`);
+            alert("删除成功");
+            fetchRecords(); // Refresh list
+        } catch (e) {
+            alert("删除失败: " + (e.response?.data?.detail || e.message));
+        }
+    };
+
     return (
         <div className="h-full flex flex-col bg-gray-50 p-6 overflow-hidden">
             <h2 className="text-xl font-bold mb-4 text-green-700 flex items-center">
                 <Database size={24} className="mr-2" />
-                学习记录
+                进化历程
             </h2>
 
             <div className="flex-1 overflow-auto bg-white rounded-lg shadow">
@@ -682,12 +716,15 @@ function LearningRecordsView() {
                             <th className="p-3 font-medium text-gray-600 w-32">贡献者</th>
                             <th className="p-3 font-medium text-gray-600 w-24">状态</th>
                             <th className="p-3 font-medium text-gray-600 w-40">时间</th>
+                            {userRole === 'admin' && (
+                                <th className="p-3 font-medium text-gray-600 w-24 text-center">操作</th>
+                            )}
                         </tr>
                     </thead>
                     <tbody>
                         {records.length === 0 ? (
                             <tr>
-                                <td colSpan="6" className="p-8 text-center text-gray-500">
+                                <td colSpan={userRole === 'admin' ? 7 : 6} className="p-8 text-center text-gray-500">
                                     暂无学习记录
                                 </td>
                             </tr>
@@ -713,6 +750,17 @@ function LearningRecordsView() {
                                         </span>
                                     </td>
                                     <td className="p-3 text-gray-500 text-sm">{record.created_at}</td>
+                                    {userRole === 'admin' && (
+                                        <td className="p-3 text-center">
+                                            <button 
+                                                onClick={() => handleDelete(record.id)}
+                                                className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded transition-colors"
+                                                title="删除"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </td>
+                                    )}
                                 </tr>
                             ))
                         )}
@@ -767,7 +815,7 @@ function UserLogsView() {
     const fetchLogs = async () => {
         setLoading(true);
         try {
-            const res = await axios.get(`/admin/chat_logs?page=${page}&limit=${limit}`);
+            const res = await axios.get(`/admin/chat_logs?page=${page}&limit=${limit}&scope=me`);
             setLogs(res.data.logs || []);
             setTotal(res.data.total || 0);
         } catch (e) {
@@ -801,7 +849,7 @@ function UserLogsView() {
                 <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-white">
                     <h2 className="text-xl font-bold flex items-center text-gray-800">
                         <FileText className="mr-2 text-blue-600" />
-                        用户提问记录
+                        提问足迹
                     </h2>
                     <button onClick={fetchLogs} className="p-2 hover:bg-gray-100 rounded-full transition-colors" title="刷新">
                         <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
@@ -914,6 +962,144 @@ function UserLogsView() {
                   <img src={zoomImage} className="max-h-screen max-w-screen object-contain p-4" onClick={(e) => e.stopPropagation()} />
                 </div>
             )}
+        </div>
+    );
+}
+
+// 全局日志视图 (Admin Only)
+function GlobalLogsView() {
+    const [logs, setLogs] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [page, setPage] = useState(1);
+    const [total, setTotal] = useState(0);
+    const limit = 20;
+
+    useEffect(() => {
+        fetchLogs();
+    }, [page]);
+
+    const fetchLogs = async () => {
+        setLoading(true);
+        try {
+            const res = await axios.get(`/admin/global_logs?page=${page}&limit=${limit}`);
+            setLogs(res.data.logs || []);
+            setTotal(res.data.total || 0);
+        } catch (e) {
+            console.error(e);
+            setLogs([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const renderLogItem = (log) => {
+        // Status Colors
+        const statusColors = {
+            'pending': 'bg-yellow-100 text-yellow-800',
+            'approved': 'bg-green-100 text-green-800',
+            'rejected': 'bg-red-100 text-red-800',
+            'completed': 'bg-blue-100 text-blue-800',
+            'normal': 'bg-gray-100 text-gray-800',
+        };
+        const statusLabel = statusColors[log.status] || 'bg-gray-100 text-gray-800';
+
+        let icon = FileText;
+        let typeLabel = "未知";
+        
+        switch(log.type) {
+            case 'chat':
+                icon = Bot;
+                typeLabel = "智能问答";
+                break;
+            case 'doc_upload':
+                icon = UploadCloud;
+                typeLabel = "文档上传";
+                break;
+            case 'qa_submission':
+                icon = Target;
+                typeLabel = "知识录入";
+                break;
+            default:
+                break;
+        }
+
+        const Icon = icon;
+
+        return (
+            <div key={`${log.type}-${log.id}`} className="bg-white p-4 rounded-lg border border-gray-200 hover:shadow-sm transition-shadow">
+                <div className="flex justify-between items-start mb-2">
+                    <div className="flex items-center space-x-2">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600`}>
+                            {typeLabel}
+                        </span>
+                        <span className="font-bold text-gray-700">{log.username}</span>
+                        <span className="text-gray-400 text-xs">{log.created_at}</span>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusLabel}`}>
+                        {log.status}
+                    </span>
+                </div>
+                
+                <div className="mb-1">
+                    <div className="font-medium text-gray-800">{log.content}</div>
+                </div>
+                
+                {log.details && (
+                    <div className="text-sm text-gray-500 bg-gray-50 p-2 rounded mt-2 truncate">
+                        {log.type === 'doc_upload' ? `路径: ${log.details}` : `回复/详情: ${log.details}`}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    return (
+        <div className="h-full flex flex-col bg-gray-50 p-6 overflow-hidden">
+             <div className="max-w-6xl mx-auto w-full h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-white">
+                    <h2 className="text-xl font-bold flex items-center text-gray-800">
+                        <Globe className="mr-2 text-blue-600" />
+                        全局日志
+                    </h2>
+                    <button onClick={fetchLogs} className="p-2 hover:bg-gray-100 rounded-full transition-colors" title="刷新">
+                        <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+                    </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
+                    {loading ? (
+                        <div className="text-center py-8 text-gray-500">加载中...</div>
+                    ) : logs.length === 0 ? (
+                        <div className="text-center py-8 text-gray-500">暂无记录</div>
+                    ) : (
+                        <div className="space-y-3">
+                            {logs.map(renderLogItem)}
+                        </div>
+                    )}
+                </div>
+                
+                {/* Pagination */}
+                <div className="p-4 border-t border-gray-200 bg-white flex justify-between items-center text-sm text-gray-500">
+                    <span>共 {total} 条记录</span>
+                    <div className="flex space-x-2">
+                        <button 
+                            disabled={page === 1}
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            className="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50"
+                        >
+                            上一页
+                        </button>
+                        <span className="px-2 py-1">第 {page} 页</span>
+                        <button 
+                            disabled={page * limit >= total}
+                            onClick={() => setPage(p => p + 1)}
+                            className="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50"
+                        >
+                            下一页
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }
@@ -2124,8 +2310,9 @@ function App() {
             {activeView === 'training' && <TrainingMode />}
             {activeView === 'approval' && <AdminView />}
             {activeView === 'logs' && <UserLogsView />}
+            {activeView === 'global_logs' && <GlobalLogsView />}
             {activeView === 'unknown' && <UnknownQuestionsView userRole={auth.role} />}
-            {activeView === 'learning' && <LearningRecordsView />}
+            {activeView === 'learning' && <LearningRecordsView userRole={auth.role} />}
             {activeView === 'knowledge' && <KnowledgeDocs auth={auth} />}
          </div>
       </div>
