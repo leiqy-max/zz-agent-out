@@ -42,7 +42,14 @@ mkdir -p "$BUILD_DIR"
 if [ ! -d "$PYTHON_DIR" ]; then
     echo "Downloading Portable Python from $PYTHON_URL..."
     if [ -f "$BUILD_DIR/$PYTHON_ARCHIVE" ]; then
-        echo "Archive found, verifying..."
+        echo "Archive found, checking integrity..."
+        if ! tar -tzf "$BUILD_DIR/$PYTHON_ARCHIVE" >/dev/null 2>&1; then
+            echo "Archive corrupted. Removing and redownloading..."
+            rm "$BUILD_DIR/$PYTHON_ARCHIVE"
+            curl -L --retry 5 --retry-delay 5 -o "$BUILD_DIR/$PYTHON_ARCHIVE" "$PYTHON_URL"
+        else
+             echo "Archive is good."
+        fi
     else
         curl -L --retry 5 --retry-delay 5 -o "$BUILD_DIR/$PYTHON_ARCHIVE" "$PYTHON_URL"
     fi

@@ -19,6 +19,18 @@ function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
+// Global axios interceptor
+axios.interceptors.request.use(
+  (config) => {
+    const auth = JSON.parse(localStorage.getItem('auth'));
+    if (auth?.token) {
+      config.headers.Authorization = `Bearer ${auth.token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 // 裁剪模态框组件
 function CropModal({ imageSrc, onConfirm, onCancel }) {
   const [selection, setSelection] = useState(null);
@@ -2485,21 +2497,6 @@ function App() {
   const [showGlobalUpload, setShowGlobalUpload] = useState(false);
 
   useEffect(() => {
-    // Add token to axios requests
-    const interceptor = axios.interceptors.request.use(
-      (config) => {
-        if (auth?.token) {
-          config.headers.Authorization = `Bearer ${auth.token}`;
-        }
-        return config;
-      },
-      (error) => Promise.reject(error)
-    );
-
-    return () => axios.interceptors.request.eject(interceptor);
-  }, [auth]);
-
-  useEffect(() => {
       const handleResize = () => {
           setIsMobile(window.innerWidth < 768);
           if (window.innerWidth >= 768) {
@@ -2590,7 +2587,7 @@ function App() {
             {activeView === 'global_logs' && <GlobalLogsView />}
             {activeView === 'unknown' && <UnknownQuestionsView userRole={auth.role} />}
             {activeView === 'learning' && <LearningRecordsView userRole={auth.role} />}
-            {activeView === 'knowledge' && <KnowledgeDocs auth={auth} />}
+            {activeView === 'knowledge' && <KnowledgeDocs auth={auth} onUpload={() => setShowGlobalUpload(true)} />}
             {activeView === 'dashboard' && <DashboardView userRole={auth.role} />}
          </div>
       </div>

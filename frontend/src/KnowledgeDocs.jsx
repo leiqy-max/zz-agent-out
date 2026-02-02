@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { renderAsync } from 'docx-preview';
-import { Search, FileText, Download, Eye, TrendingUp, File as FileIcon, Trash2, X } from 'lucide-react';
+import { Search, FileText, Download, Eye, TrendingUp, File as FileIcon, Trash2, X, UploadCloud } from 'lucide-react';
 
-export default function KnowledgeDocs({ auth }) {
+export default function KnowledgeDocs({ auth, onUpload }) {
     const [searchTerm, setSearchTerm] = useState('');
     const [docs, setDocs] = useState([]);
     const [hotDocs, setHotDocs] = useState([]);
@@ -164,6 +164,13 @@ export default function KnowledgeDocs({ auth }) {
                         <h2 className="text-xl font-bold flex items-center text-gray-800 mb-4">
                             <FileText className="mr-2 text-blue-600" />
                             知识文档库
+                            <button 
+                                onClick={onUpload}
+                                className="ml-4 flex items-center space-x-1 px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm shadow-sm"
+                            >
+                                <UploadCloud size={16} />
+                                <span>上传知识库</span>
+                            </button>
                         </h2>
                         <div className="relative">
                             <input
