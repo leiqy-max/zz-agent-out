@@ -75,8 +75,12 @@ rm -rf "$VENV_DIR"
 echo "Installing dependencies..."
 PIP="$VENV_DIR/bin/pip"
 "$PIP" install --upgrade pip
-"$PIP" install -r requirements.txt
-"$PIP" install captcha passlib bcrypt pyyaml requests cffi python-dotenv python-jose jinja2 markupsafe
+if [ -f "backend/requirements.txt" ]; then
+    "$PIP" install -r backend/requirements.txt
+else
+    "$PIP" install -r requirements.txt
+fi
+"$PIP" install captcha passlib bcrypt pyyaml requests cffi python-dotenv python-jose jinja2 markupsafe pandas openpyxl python-docx
 "$PIP" install "patchelf==0.17.2"
 "$PIP" install pyinstaller staticx scons
 

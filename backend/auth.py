@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Query
@@ -9,7 +10,7 @@ from sqlalchemy import text
 from db import engine
 
 # Configuration
-SECRET_KEY = "zz-agent-out-secret-key-change-me"  # In production, use environment variable
+SECRET_KEY = os.getenv("SECRET_KEY", "zz-agent-out-secret-key-change-me")  # In production, use environment variable
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 

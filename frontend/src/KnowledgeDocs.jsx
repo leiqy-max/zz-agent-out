@@ -144,12 +144,14 @@ export default function KnowledgeDocs({ auth, onUpload }) {
             <div className="flex flex-col items-center justify-center h-full text-gray-500">
                 <FileText size={48} className="mb-4 text-gray-300" />
                 <p>该文件格式 ({ext}) 暂不支持在线预览</p>
+                {auth?.role !== 'guest' && (
                 <button 
                     onClick={() => handleDownload(doc.id, doc.filename)}
                     className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                 >
                     下载查看
                 </button>
+                )}
             </div>
         );
     };
@@ -201,7 +203,16 @@ export default function KnowledgeDocs({ auth, onUpload }) {
                                                 <FileIcon size={24} className="text-blue-500" />
                                             </div>
                                             <div>
-                                                <div className="font-medium text-gray-800">{doc.filename}</div>
+                                                <div className="font-medium text-gray-800 flex items-center flex-wrap">
+                                                    <span className="mr-2">{doc.filename}</span>
+                                                    <span className={`text-xs px-2 py-0.5 rounded border whitespace-nowrap ${
+                                                        doc.kb_type === 'admin' 
+                                                            ? 'bg-purple-50 text-purple-600 border-purple-200' 
+                                                            : 'bg-green-50 text-green-600 border-green-200'
+                                                    }`}>
+                                                        {doc.kb_type === 'admin' ? '运维知识库' : '用户知识库'}
+                                                    </span>
+                                                </div>
                                                 <div className="text-xs text-gray-500 flex items-center space-x-3 mt-1">
                                                     <span>{formatSize(doc.file_size)}</span>
                                                     <span>•</span>
@@ -225,6 +236,7 @@ export default function KnowledgeDocs({ auth, onUpload }) {
                                                 <Eye size={16} className="mr-1.5" />
                                                 在线浏览
                                             </button>
+                                            {auth?.role !== 'guest' && (
                                             <button
                                                 onClick={() => handleDownload(doc.id, doc.filename)}
                                                 className="p-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -232,6 +244,7 @@ export default function KnowledgeDocs({ auth, onUpload }) {
                                             >
                                                 <Download size={18} />
                                             </button>
+                                            )}
                                             {auth?.role === 'admin' && (
                                                 <button
                                                     onClick={() => handleDelete(doc.id, doc.filename)}
@@ -324,6 +337,7 @@ export default function KnowledgeDocs({ auth, onUpload }) {
                                 </h3>
                             </div>
                             <div className="flex items-center space-x-2">
+                                {auth?.role !== 'guest' && (
                                 <button 
                                     onClick={() => handleDownload(previewDoc.id, previewDoc.filename)}
                                     className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -331,6 +345,7 @@ export default function KnowledgeDocs({ auth, onUpload }) {
                                 >
                                     <Download size={20} />
                                 </button>
+                                )}
                                 <button 
                                     onClick={closePreview}
                                     className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"

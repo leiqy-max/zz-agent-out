@@ -23,5 +23,5 @@ DATABASE_URL = URL.create(
     database=os.getenv("DB_NAME"),
 )
 
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(bind=engine)

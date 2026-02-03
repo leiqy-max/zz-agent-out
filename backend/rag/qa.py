@@ -146,10 +146,27 @@ def answer_question(question: str, image: Optional[str] = None, kb_type: str = "
 
     # 1. 检索 (传入 kb_type)
     # Define threshold for similarity distance (lower is better for cosine distance in pgvector)
-    # Typically 0.5-0.7 is a reasonable threshold for semantic similarity
-    SIMILARITY_THRESHOLD = 0.8
+    # Using L2 distance (<->): 
+    # 0.8 ~= Cosine Sim 0.68 (Too strict)
+    # 1.2 ~= Cosine Sim 0.28 (Reasonable for retrieval)
+    # 1.4 ~= Relaxed for broader recall
+    SIMILARITY_THRESHOLD = 1.45
     
-    docs = retrieve_similar_documents(question, kb_type=kb_type)
+    docs = retrieve_similar_documents(question, kb_type=kb_type, top_k=5)
+
+    # Dynamic Thresholding Strategy:
+    # If we find a very high-quality match (e.g., keyword match with distance 0.0 or very close vector match),
+    # we should significantly tighten the threshold to exclude irrelevant "noise" documents.
+    current_threshold = SIMILARITY_THRESHOLD
+    if docs:
+        # Get the best (minimum) distance
+        min_dist = min([d[3] if len(d) > 3 else 1.0 for d in docs])
+        
+        # If best match is extremely close (e.g. < 0.2, likely a keyword match or perfect vector match)
+        if min_dist < 0.2:
+             # Tighten threshold to only include other very strong matches.
+             # 0.5 allows for some variation but cuts off the ~1.2 noise.
+             current_threshold = 0.5 
 
     sources = []
     seen_filenames = set()
@@ -158,8 +175,8 @@ def answer_question(question: str, image: Optional[str] = None, kb_type: str = "
             # doc structure: (id, content, metadata, distance)
             distance = doc[3] if len(doc) > 3 else 1.0
             
-            # Filter by distance threshold
-            if distance > SIMILARITY_THRESHOLD:
+            # Filter by dynamic threshold
+            if distance > current_threshold:
                 continue
                 
             meta = doc[2]
@@ -174,8 +191,8 @@ def answer_question(question: str, image: Optional[str] = None, kb_type: str = "
                     })
                     seen_filenames.add(filename)
     
-    # Re-check docs after filtering
-    valid_docs = [d for d in docs if (d[3] if len(d) > 3 else 1.0) <= SIMILARITY_THRESHOLD]
+    # Re-check docs after filtering using the dynamic threshold
+    valid_docs = [d for d in docs if (d[3] if len(d) > 3 else 1.0) <= current_threshold]
 
     # 2. 构建 Prompt
     context = build_context(valid_docs) if valid_docs else "（未检索到相关文档）"

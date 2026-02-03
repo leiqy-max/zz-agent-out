@@ -2380,10 +2380,8 @@ function ChatInterface({ auth, onLogout, isUserMode }) {
                 <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center mt-1 bg-white border border-gray-200">
                     <Bot size={18} className="text-purple-600" />
                 </div>
-                <div className="flex items-center space-x-2 h-10">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                <div className="flex items-center h-10 px-4 bg-gray-50 rounded-2xl rounded-tl-none border border-gray-100">
+                  <span className="text-sm text-purple-600 font-medium animate-pulse">大模型分析中...</span>
                 </div>
               </div>
             </div>
