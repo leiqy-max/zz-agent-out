@@ -76,12 +76,20 @@ from auth import (
 )
 
 
+from nacos_registry import NacosRegistry
+
 # 数据库初始化 (适配 Docker/Mac 首次运行)
 from contextlib import asynccontextmanager
+
+# Initialize Nacos Registry
+nacos_registry = NacosRegistry()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
+    # Start Nacos Registration
+    nacos_registry.start()
+    
     try:
         with engine.connect() as conn:
             # 启用 pgvector 扩展
@@ -189,6 +197,7 @@ async def lifespan(app: FastAPI):
     
     yield
     # Shutdown logic (if any)
+    nacos_registry.stop()
 
 # 初始化 FastAPI
 app = FastAPI(lifespan=lifespan)

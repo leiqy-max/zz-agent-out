@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ops-agent-backend
+  labels:
+    app: ops-agent-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ops-agent-backend
+  template:
+    metadata:
+      labels:
+        app: ops-agent-backend
+    spec:
+      containers:
+        - name: backend
+          image: ops-agent-backend:latest # 请替换为内网镜像仓库地址
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DB_HOST
+              value: "ops-agent-db-service"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              value: "ops_user"
+            - name: DB_PASSWORD
+              value: "OpsPassword123!"
+            - name: DB_NAME
+              value: "ops_agent_db"
+            - name: ZHIPUAI_API_KEY
+              value: "your_api_key_here" # 建议使用 Secret 管理
+          volumeMounts:
+            - name: app-data
+              mountPath: /app/uploads
+      volumes:
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: ops-agent-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ops-agent-backend-service
+spec:
+  selector:
+    app: ops-agent-backend
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ops-agent-frontend
+  labels:
+    app: ops-agent-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ops-agent-frontend
+  template:
+    metadata:
+      labels:
+        app: ops-agent-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: ops-agent-frontend:latest # 请替换为内网镜像仓库地址
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ops-agent-frontend-service
+spec:
+  selector:
+    app: ops-agent-frontend
+  type: NodePort # 或 LoadBalancer，取决于 NC 平台配置
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 80
+      nodePort: 30080

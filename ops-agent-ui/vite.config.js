@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // 适配 NC 框架：将基础路径设置为 /ops-agent-ui/，确保静态资源在 Nginx 子路径下能正确加载
+  base: '/ops-agent-ui/',
   plugins: [react()],
   server: {
     allowedHosts: true,

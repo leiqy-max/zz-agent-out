@@ -76,3 +76,4 @@ yarl==1.22.0
 zhipuai==2.1.5.20250825
 captcha==0.7.1
 python-jose[cryptography]==3.5.0
+nacos-sdk-python==0.1.12

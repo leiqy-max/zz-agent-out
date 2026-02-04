@@ -73,9 +73,13 @@ npm install
 npm run dev
 ```
 
-### 内网离线部署
+### 内网离线部署 (Method 1: 单文件二进制)
 对于无法连接互联网的内网环境，本项目提供了全量打包脚本，生成单文件可执行程序。
 详细指南请参考 [INTRANET_GUIDE.md](INTRANET_GUIDE.md)。
+
+### 容器化部署 (Method 2: NC 框架适配)
+针对需要对接 **NC 框架** 或 **K8s 云平台** 的场景，推荐使用 Docker 容器化部署。
+支持镜像导出离线部署。详细指南请参考 [NC_CONTAINER_GUIDE.md](NC_CONTAINER_GUIDE.md)。
 
 ## 📝 最近更新 (Latest Updates)
 

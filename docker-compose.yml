@@ -1,55 +1,60 @@
 version: '3.8'
 
 services:
-  frontend:
-    build: ./frontend
-    container_name: zz-agent-out-frontend
+  ops-agent-ui:
+    build: 
+      context: ./ops-agent-ui
+      dockerfile: Dockerfile
+    image: ops-agent-ui:latest
+    container_name: ops-agent-ui
     restart: always
     ports:
-      - "5173:80"  # 飞牛 NAS 上可以通过 http://NAS_IP:5173 访问
+      - "8080:80"
     depends_on:
-      - backend
+      - ops-agent-biz
+    networks:
+      - ops-net
 
-  backend:
-    build: ./backend
-    container_name: zz-agent-out-backend
+  ops-agent-biz:
+    build:
+      context: .
+      dockerfile: ops-agent-biz/Dockerfile
+    image: ops-agent-biz:latest
+    container_name: ops-agent-biz
     restart: always
     environment:
-      - DB_HOST=db
+      - DB_HOST=ops-agent-db
       - DB_PORT=5432
-      - DB_USER=zz_agent_out
-      - DB_PASSWORD=ZZAgentOut@123
-      - DB_NAME=zz_agent_out
-      # 请在 .env 文件中设置 ZHIPUAI_API_KEY，或者直接在这里修改
+      - DB_USER=ops_user
+      - DB_PASSWORD=OpsPassword123!
+      - DB_NAME=ops_agent_db
       - ZHIPUAI_API_KEY=${ZHIPUAI_API_KEY}
     volumes:
       - ./data/uploads:/app/uploads
       - ./data/question_history.json:/app/question_history.json
     depends_on:
-      - db
+      - ops-agent-db
+    networks:
+      - ops-net
 
-  db:
+  ops-agent-db:
     image: pgvector/pgvector:pg16
-    container_name: zz-agent-out-db
+    container_name: ops-agent-db
     restart: always
     environment:
-      - POSTGRES_USER=zz_agent_out
-      - POSTGRES_PASSWORD=ZZAgentOut@123
-      - POSTGRES_DB=zz_agent_out
+      - POSTGRES_USER=ops_user
+      - POSTGRES_PASSWORD=OpsPassword123!
+      - POSTGRES_DB=ops_agent_db
     volumes:
       - ./data/db:/var/lib/postgresql/data
     ports:
-      - "54320:5432"
+      - "5432:5432"
+    networks:
+      - ops-net
 
-  tunnel:
-    image: cloudflare/cloudflared:latest
-    container_name: zz-agent-out-tunnel
-    restart: always
-    command: tunnel run
-    environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
-    depends_on:
-      - frontend
+networks:
+  ops-net:
+    driver: bridge
 
 volumes:
   data:
